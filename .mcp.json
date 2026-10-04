@@ -1,8 +1,11 @@
 {
   "mcpServers": {
-    "shipcheck": {
-      "type": "http",
-      "url": "https://7it.co.il/mcp?via=shipcheck-plugin&set=shipcheck"
+    "shipcheck-fix": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/fix-server.mjs"],
+      "env": {
+        "SHIPCHECK_FIX_KEY": "${user_config.fix_key}"
+      }
     }
   }
 }

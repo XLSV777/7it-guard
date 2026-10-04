@@ -1,7 +1,8 @@
 {
   "name": "shipcheck",
-  "version": "0.1.0",
-  "description": "Checks a deployed web app from the outside before it ships: security headers, a public source map, phone speed, email authentication of its domain and accessibility, plus exposed files and the Supabase or Firebase backend once the owner proves control of the app. Returns one prioritized list of what to fix first. Reads only; nothing to set up.",
+  "displayName": "Ship Check",
+  "version": "0.2.0",
+  "description": "Checks a deployed web app from the outside before it ships, on your own machine: HTTPS and security headers, a public source map, email authentication of its domain, speed, accessibility, SEO and reliability, plus exposed files, keys in the browser code and the Supabase or Firebase backend once you confirm the app is yours. Scores eight categories, grades the app, and returns one prioritized list of what to fix first, with a full visual report that never leaves your browser.",
   "author": {
     "name": "7IT Solutions",
     "url": "https://7it.co.il/"
@@ -15,6 +16,19 @@
     "supabase",
     "firebase",
     "accessibility",
-    "web-performance"
-  ]
+    "web-performance",
+    "seo"
+  ],
+  "privacyPolicyUrl": "https://7it.co.il/privacy/#ship-check",
+  "documentationUrl": "https://7it.co.il/tools/ship-check/",
+  "supportUrl": "https://github.com/XLSV777/shipcheck/issues",
+  "userConfig": {
+    "fix_key": {
+      "type": "string",
+      "title": "Fix playbook key (optional)",
+      "description": "Leave empty unless you have a Ship Check fix key. With a key, /shipcheck:fix fetches one strict fix playbook for your report; without one, it fixes from the report alone. Kept in your system's secure storage.",
+      "required": false,
+      "sensitive": true
+    }
+  }
 }
