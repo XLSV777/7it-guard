@@ -1,4 +1,4 @@
-// Tests for scripts/check.mjs and scripts/fix-server.mjs. Run: node --test tests/check.test.mjs
+// Tests for skills/guard/scripts/check.mjs and scripts/fix-server.mjs. Run: node --test tests/check.test.mjs
 // Nothing here touches the internet: every "https://<host>/..." request is routed to a local
 // mock server by host name, DNS answers come from a stub, and the TLS check is stubbed.
 import { test } from 'node:test';
@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { inflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { runCheck, textReport, reportLink, normalizeTarget, localToken, mailDomainOf, gradeOf, mapsKey, mapsHash } from '../scripts/check.mjs';
+import { runCheck, textReport, reportLink, normalizeTarget, localToken, mailDomainOf, gradeOf, mapsKey, mapsHash } from '../skills/guard/scripts/check.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 

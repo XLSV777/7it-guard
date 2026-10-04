@@ -1,10 +1,12 @@
 # 7IT Guard
 
+**The control room for apps built with AI.**
+
 Docs: https://7it.co.il/tools/guard/
 
 A Claude Code plugin that checks a deployed web app from the outside before it ships, **on your own machine**, and returns one graded, prioritized list of what to fix first. Made for apps built with AI tools (Lovable, Replit, Bolt, v0, Cursor, Claude Code), and works for any app at a public address.
 
-The check is one readable Node script, [`scripts/check.mjs`](scripts/check.mjs): Node 18 or newer, built-in modules only, no dependencies, nothing to install.
+The check is one readable Node script, [`skills/guard/scripts/check.mjs`](skills/guard/scripts/check.mjs) (inside the skill's folder, so the skill also works on its own in other agents): Node 18 or newer, built-in modules only, no dependencies, nothing to install.
 
 ## What it checks
 
@@ -32,6 +34,22 @@ Needs Node.js 18 or newer. No account. The plugin asks for an optional 7IT key w
 
 The 7Maps marketplace lists 7IT Guard too, so `/plugin marketplace add XLSV777/7maps` followed by `/plugin install 7it-guard@7maps` installs the same plugin.
 
+### Other agents
+
+The `guard` skill carries its script in its own folder, so it works in other agents that read Agent Skills (Codex, Cursor, GitHub Copilot, Gemini CLI and others), with the same local run and the same rules:
+
+```
+npx skills add XLSV777/7it-guard
+```
+
+Gemini CLI can install the repository as an extension (`gemini-extension.json` at the root):
+
+```
+gemini extensions install https://github.com/XLSV777/7it-guard
+```
+
+Outside Claude Code there is no `/7it-guard:check` command and no fix server: ask in your own words ("is my app at myapp.com ready to ship?").
+
 ## Use
 
 ```
@@ -41,11 +59,11 @@ The 7Maps marketplace lists 7IT Guard too, so `/plugin marketplace add XLSV777/7
 Or ask in your own words: "is my app ready to ship?", "run a pre-launch check on myapp.com". The `guard` skill picks it up. Claude runs:
 
 ```
-node scripts/check.mjs myapp.com              # the report as text
-node scripts/check.mjs myapp.com --json       # the same, as JSON
-node scripts/check.mjs myapp.com --owner      # include the deep checks (your own app, token on it)
-node scripts/check.mjs myapp.com --token      # print the ownership token
-node scripts/check.mjs myapp.com --no-7maps   # skip the 7Maps lookup of an MCP server the app publishes
+node skills/guard/scripts/check.mjs myapp.com              # the report as text
+node skills/guard/scripts/check.mjs myapp.com --json       # the same, as JSON
+node skills/guard/scripts/check.mjs myapp.com --owner      # include the deep checks (your own app, token on it)
+node skills/guard/scripts/check.mjs myapp.com --token      # print the ownership token
+node skills/guard/scripts/check.mjs myapp.com --no-7maps   # skip the 7Maps lookup of an MCP server the app publishes
 ```
 
 You can run the script yourself too. A sample terminal report:
