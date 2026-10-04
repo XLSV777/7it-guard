@@ -1,0 +1,19 @@
+{
+  "name": "shipcheck",
+  "owner": {
+    "name": "7IT Solutions",
+    "url": "https://7it.co.il/"
+  },
+  "plugins": [
+    {
+      "name": "shipcheck",
+      "source": "./",
+      "description": "Checks a deployed web app from the outside before it ships: security headers, a public source map, phone speed, email authentication of its domain and accessibility, plus exposed files and the Supabase or Firebase backend once the owner proves control of the app. Returns one prioritized list of what to fix first. Reads only; nothing to set up.",
+      "version": "0.1.0",
+      "category": "security"
+    }
+  ],
+  "metadata": {
+    "description": "Ship Check by 7IT: one prioritized pre-launch report for a deployed web app."
+  }
+}

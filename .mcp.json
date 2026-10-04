@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "shipcheck": {
+      "type": "http",
+      "url": "https://7it.co.il/mcp?via=shipcheck-plugin&set=shipcheck"
+    }
+  }
+}
