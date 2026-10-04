@@ -1,10 +1,10 @@
 {
   "mcpServers": {
-    "shipcheck-fix": {
+    "guard-fix": {
       "command": "node",
       "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/fix-server.mjs"],
       "env": {
-        "SHIPCHECK_FIX_KEY": "${user_config.fix_key}"
+        "GUARD_FIX_KEY": "${user_config.fix_key}"
       }
     }
   }

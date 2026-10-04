@@ -1,13 +1,17 @@
 #!/usr/bin/env node
-// Ship Check 0.2.0: checks a deployed web app from the outside, on YOUR machine.
+// 7IT Guard 0.3.0: checks a deployed web app from the outside, on YOUR machine.
 //
-//   node shipcheck.mjs <address> [--owner] [--json] [--no-link] [--token]
+//   node check.mjs <address> [--owner] [--json] [--no-link] [--no-7maps] [--token]
 //
 // Every request goes from this machine straight to the app you name, to public DNS, and
 // (only with --owner, on an app that carries the ownership token) to the Supabase or
-// Firebase project the app's own browser code points at. Nothing is sent to 7IT. The
-// optional "Full report" link keeps the results in the part of the address after "#",
-// which browsers never send to a server.
+// Firebase project the app's own browser code points at. Nothing about the app is sent to
+// 7IT. One exception, and only when the app itself publishes an MCP server: the check
+// downloads one small public list from 7Maps (7it.co.il/7maps/known/<2 characters>.json)
+// to say whether that server is on the 7Maps map. The request carries only the first two
+// characters of a hash, never the address; the comparison happens here. --no-7maps skips
+// it. The optional "Full report" link keeps the results in the part of the address after
+// "#", which browsers never send to a server.
 //
 // Plain Node (18 or newer), built-in modules only, no dependencies. Read it top to bottom:
 //   1. settings and small helpers        5. the deep checks (owner only)
@@ -28,10 +32,15 @@ import { pathToFileURL } from 'node:url';
 
 // ------------------------------------------------------------------ 1. settings and helpers
 
-export const VERSION = '0.2.0';
-const UA = `Mozilla/5.0 (compatible; ShipCheck/${VERSION}; +https://7it.co.il/tools/ship-check/)`;
-export const REPORT_BASE = 'https://7it.co.il/tools/ship-check/report/';
+export const VERSION = '0.3.0';
+const UA = `Mozilla/5.0 (compatible; 7ITGuard/${VERSION}; +https://7it.co.il/tools/guard/)`;
+export const REPORT_BASE = 'https://7it.co.il/tools/guard/report/';
 export const REVIEW_URL = 'https://7it.co.il/services/ai-built-apps/';
+// 7Maps, the public map of MCP servers (also by 7IT). Used only when the app publishes an MCP server.
+export const MAPS_KNOWN = 'https://7it.co.il/7maps/known/';
+export const MAPS_PAGE = 'https://7it.co.il/7maps/s/';
+export const MAPS_CLAIM = 'https://7it.co.il/7maps/claim/';
+export const MAPS_SUBMIT = 'https://7it.co.il/7maps/submit/';
 const LINK_MAX = 7800; // characters of the encoded report in the link (about 8 KB)
 
 // Polite limits: at most this many requests in flight to one host, and short timeouts.
@@ -70,6 +79,7 @@ export function normalizeTarget(raw) {
 // (a meta tag named 7it-site-verification, or a /7it-verify.txt file). The plugin's token is
 // derived from the host name alone, so it can be computed here without asking any server;
 // the website accepts it too. Any 7it-verify token already on the app also counts.
+// The salt keeps its original '7it-shipcheck' spelling on purpose: tokens already on apps stay valid.
 export const localToken = (host) => '7it-verify-' + createHash('sha256').update('7it-shipcheck|' + host).digest('hex').slice(0, 28);
 const TOKEN_RE = /7it-verify-[0-9a-f]{28}/;
 
@@ -453,7 +463,7 @@ async function reliabilityChecks(net, ctx, home, add, metrics) {
     else if (cert.days < 14) add('cert_expiring', 'reliability', 'medium', `The HTTPS certificate expires in ${cert.days} days.`, 'Automatic renewal usually runs about 30 days before expiry; check that it is on and working.');
   }
   // An address that does not exist should answer 404, not the home page.
-  const missing = await net.get(`${origin}/shipcheck-${randomBytes(4).toString('hex')}`, { max: 2000 });
+  const missing = await net.get(`${origin}/7it-guard-${randomBytes(4).toString('hex')}`, { max: 2000 });
   metrics.not_found_status = missing.status;
   if (missing.status === 200) add('soft_404', 'reliability', 'low', 'Missing pages answer 200 instead of 404.', 'Return a real 404 status for unknown addresses so search engines and monitors can tell an error from a page.');
   // www and the bare domain: both should answer (one redirecting to the other).
@@ -467,6 +477,73 @@ async function reliabilityChecks(net, ctx, home, add, metrics) {
   }
   const sec = await net.get(`${origin}/.well-known/security.txt`, { max: 2000 });
   if (!(sec.ok && /contact\s*:/i.test(sec.text))) add('security_txt_missing', 'security', 'info', 'No security.txt.', 'Publish /.well-known/security.txt with a contact, so someone who finds a flaw can tell you.');
+}
+
+// Does the app publish an MCP server (a server AI agents connect to)? Read from three public
+// places on the app itself: its MCP server card (/.well-known/mcp/server-card.json), its AI
+// catalog (/.well-known/ai-catalog.json, following up to 3 server cards on the same host) and
+// /mcp. Only the server addresses are kept. A single-page app that answers every path with its
+// home page does not count, and neither does any page that is not an MCP answer.
+export async function mcpFind(net, origin, homeText) {
+  const host = new URL(origin).hostname;
+  const found = new Set();
+  const sameAsHome = (r) => !!homeText && r.text.slice(0, 1500) === homeText.slice(0, 1500);
+  const addUrl = (raw) => {
+    try {
+      const u = new URL(raw, origin);
+      if (u.protocol === 'https:' && found.size < 5) found.add(u.origin + u.pathname.replace(/\/+$/, ''));
+    } catch { /* not an address */ }
+  };
+  const fromCard = (j) => { for (const r of Array.isArray(j?.remotes) ? j.remotes : []) if (r && typeof r.url === 'string') addUrl(r.url); };
+  const readJson = (r) => { if (!r.ok || sameAsHome(r)) return null; try { return JSON.parse(r.text); } catch { return null; } };
+
+  const [card, catalog, endpoint] = await Promise.all([
+    net.get(`${origin}/.well-known/mcp/server-card.json`, { max: 100_000, headers: { Accept: 'application/json' } }),
+    net.get(`${origin}/.well-known/ai-catalog.json`, { max: 100_000, headers: { Accept: 'application/json' } }),
+    net.get(`${origin}/mcp`, { max: 4000, follow: false, headers: { Accept: 'application/json, text/event-stream' } }),
+  ]);
+  fromCard(readJson(card));
+  const cat = readJson(catalog);
+  const cards = (Array.isArray(cat?.entries) ? cat.entries : [])
+    .filter((e) => e && typeof e.url === 'string' && /mcp/i.test(String(e.type || '')))
+    .map((e) => { try { return new URL(e.url, origin); } catch { return null; } })
+    .filter((u) => u && u.hostname === host && u.protocol === 'https:')
+    .slice(0, 3);
+  for (const u of cards) fromCard(readJson(await net.get(u.href, { max: 100_000, headers: { Accept: 'application/json' } })));
+  // /mcp itself: a JSON-RPC answer, an event stream, or a sign-in request that names its OAuth metadata.
+  const ctype = endpoint.headers.get('content-type') || '';
+  const auth = endpoint.headers.get('www-authenticate') || '';
+  if (endpoint.status && !sameAsHome(endpoint) && (/"jsonrpc"\s*:\s*"2\.0"/.test(endpoint.text) || /text\/event-stream/i.test(ctype) || (endpoint.status === 401 && /resource_metadata=/i.test(auth)))) addUrl(`${origin}/mcp`);
+  return [...found];
+}
+
+// The map key and hash of a server address, exactly as 7Maps states them in its public lists:
+// host in lower case without "www." and port, then the path without trailing "/"; SHA-256, first 12 hex.
+export const mapsKey = (raw) => {
+  try {
+    const u = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    return u.hostname.toLowerCase().replace(/^www\./, '') + (u.pathname.replace(/\/+$/, '') || '');
+  } catch { return ''; }
+};
+export const mapsHash = (key) => createHash('sha256').update(key, 'utf8').digest('hex').slice(0, 12);
+
+// Is each server on 7Maps? Downloads the public list for the first two characters of each hash
+// (about 1 KB; at most 3 downloads) and compares here. The address never leaves this machine.
+export async function mapsLookup(net, urls) {
+  const out = urls.map((url) => ({ url, key: mapsKey(url), on_7maps: null }));
+  const buckets = new Map();
+  for (const s of out) { if (!s.key) continue; s.hash = mapsHash(s.key); const b = s.hash.slice(0, 2); if (!buckets.has(b)) buckets.set(b, null); }
+  for (const b of [...buckets.keys()].slice(0, 3)) {
+    const r = await net.json(`${MAPS_KNOWN}${b}.json?via=guard`, { headers: { Accept: 'application/json' }, max: 100_000 });
+    if (r.json && Array.isArray(r.json.hashes)) buckets.set(b, new Set(r.json.hashes));
+  }
+  for (const s of out) {
+    const set = s.hash ? buckets.get(s.hash.slice(0, 2)) : null;
+    if (set) s.on_7maps = set.has(s.hash);
+    s.page = s.on_7maps ? MAPS_PAGE + s.key : null;
+    delete s.hash;
+  }
+  return out;
 }
 
 // SPF, DKIM, DMARC of the app's domain from public DNS (no mail is sent).
@@ -716,7 +793,7 @@ export function score(findings, checked) {
 }
 
 // The whole check. deps (for tests): { fetchImpl, dns, tls, env, now }.
-export async function runCheck(rawUrl, { owner = false, deps = {} } = {}) {
+export async function runCheck(rawUrl, { owner = false, maps = true, deps = {} } = {}) {
   const target = normalizeTarget(rawUrl);
   if (!target) return { error: 'bad_url', message: 'That is not a public web address. Pass a domain such as myapp.com or a full https:// address.' };
   const net = makeNet({ fetchImpl: deps.fetchImpl });
@@ -780,6 +857,11 @@ export async function runCheck(rawUrl, { owner = false, deps = {} } = {}) {
       emailFindings(m, add);
       checked.email = { ran: true, note: mailDomain };
     })(),
+    (async () => {
+      const urls = await mcpFind(net, origin, home.text);
+      if (!urls.length) return;
+      info.mcp = maps ? await mapsLookup(net, urls) : urls.map((url) => ({ url, key: mapsKey(url), on_7maps: null, page: null }));
+    })(),
   ];
   const psiKey = env.PAGESPEED_API_KEY || '';
   if (psiKey) tasks.push(pageSpeed(net, finalUrl, psiKey, add, metrics));
@@ -829,6 +911,7 @@ export async function runCheck(rawUrl, { owner = false, deps = {} } = {}) {
       email_domain: mailDomain || null,
       tables: info.tables || [],
       buckets: info.buckets || [],
+      mcp: info.mcp || [],
       requests: Object.fromEntries(net.hosts),
     };
   }
@@ -857,6 +940,7 @@ export function reportLink(report) {
     e: report.email_domain,
     tb: report.tables,
     bk: report.buckets,
+    mc: (report.mcp || []).map((s) => [s.url, s.on_7maps === true ? 1 : s.on_7maps === false ? 0 : -1]),
   };
   const pack = () => deflateRawSync(Buffer.from(JSON.stringify(p)), { level: 9 }).toString('base64url');
   let enc = pack();
@@ -877,7 +961,7 @@ export function textReport(report, { link = true } = {}) {
   const lines = [];
   const now = report.findings.filter((f) => f.sev === 'critical' || f.sev === 'high');
   const later = report.findings.filter((f) => f.sev === 'medium' || f.sev === 'low');
-  lines.push(`Ship Check ${report.version} · ${report.host} · ${report.checked_at.slice(0, 10)} · run on this machine, nothing sent to 7IT`);
+  lines.push(`7IT Guard ${report.version} · ${report.host} · ${report.checked_at.slice(0, 10)} · run on this machine, nothing about the app sent to 7IT`);
   lines.push(`Grade ${report.grade} (${report.score}/100) · ${now.length} to fix before shipping · ${later.length} to fix soon`);
   lines.push('');
   for (const [key, label] of CATEGORIES) {
@@ -905,6 +989,16 @@ export function textReport(report, { link = true } = {}) {
     lines.push(`  <meta name="7it-site-verification" content="${report.token}"> in the home page <head>,`);
     lines.push(`  or a file at https://${report.host}/7it-verify.txt containing ${report.token}`);
   }
+  const mcp = report.mcp || [];
+  if (mcp.length) {
+    lines.push('', `MCP server${mcp.length === 1 ? '' : 's'} published by this app (for AI agents):`);
+    for (const s of mcp) {
+      if (s.on_7maps === true) lines.push(`  ${s.url}: on 7Maps, the public map of MCP servers: ${s.page}`);
+      else if (s.on_7maps === false) lines.push(`  ${s.url}: not on 7Maps yet. Its owner can add it: ${MAPS_SUBMIT}`);
+      else lines.push(`  ${s.url}: not looked up on 7Maps in this run.`);
+    }
+    if (mcp.some((s) => s.on_7maps === true)) lines.push(`  If the server is yours, verify ownership on 7Maps so agents see it is yours: ${MAPS_CLAIM}`);
+  }
   const hosts = Object.keys(report.requests);
   lines.push('', `Requests: ${Object.values(report.requests).reduce((a, b) => a + b, 0)} from this machine to ${hosts.slice(0, 4).join(', ')}${hosts.length > 4 ? ` and ${hosts.length - 4} more` : ''}, plus public DNS. ${report.seconds} s.`);
   if (link) lines.push(`Full report: ${reportLink(report)}`);
@@ -914,16 +1008,18 @@ export function textReport(report, { link = true } = {}) {
 
 // ------------------------------------------------------------------ 8. the command line
 
-const HELP = `Ship Check ${VERSION}: check a deployed web app from the outside, on this machine.
+const HELP = `7IT Guard ${VERSION}: check a deployed web app from the outside, on this machine.
 
-  node shipcheck.mjs <address> [--owner] [--json] [--no-link]
-  node shipcheck.mjs <address> --token
+  node check.mjs <address> [--owner] [--json] [--no-link] [--no-7maps]
+  node check.mjs <address> --token
 
-  --owner    the person running this owns the app: also check exposed files, keys in the
-             browser code and the Supabase or Firebase backend (needs the ownership token
-             on the app; --token prints it)
-  --json     machine-readable output
-  --no-link  leave out the full report link
+  --owner     the person running this owns the app: also check exposed files, keys in the
+              browser code and the Supabase or Firebase backend (needs the ownership token
+              on the app; --token prints it)
+  --json      machine-readable output
+  --no-link   leave out the full report link
+  --no-7maps  when the app publishes an MCP server, do not download the 7Maps list that
+              says whether the server is on the map
 
 Optional: PAGESPEED_API_KEY=<your own Google API key> adds Google PageSpeed scores.`;
 
@@ -938,7 +1034,7 @@ export async function main(argv) {
     console.log(`Ownership token for ${t.hostname}: ${token}\n\nAdd ONE of these to the app and deploy:\n  <meta name="7it-site-verification" content="${token}">   (inside <head> of the home page)\n  https://${t.hostname}/7it-verify.txt containing exactly: ${token}\n\nThe token runs nothing and can be removed after the check.`);
     return 0;
   }
-  const report = await runCheck(args[0], { owner: flags.has('--owner') });
+  const report = await runCheck(args[0], { owner: flags.has('--owner'), maps: !flags.has('--no-7maps') });
   if (report.error) {
     console.log(flags.has('--json') ? JSON.stringify(report) : report.message);
     return report.error === 'bad_url' ? 2 : 3;
@@ -952,5 +1048,5 @@ export async function main(argv) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (e) => { console.log(`Ship Check stopped: ${e?.message || e}`); process.exitCode = 1; });
+  main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (e) => { console.log(`7IT Guard stopped: ${e?.message || e}`); process.exitCode = 1; });
 }

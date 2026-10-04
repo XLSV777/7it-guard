@@ -1,14 +1,14 @@
 {
-  "name": "shipcheck",
-  "displayName": "Ship Check",
-  "version": "0.2.0",
-  "description": "Checks a deployed web app from the outside before it ships, on your own machine: HTTPS and security headers, a public source map, email authentication of its domain, speed, accessibility, SEO and reliability, plus exposed files, keys in the browser code and the Supabase or Firebase backend once you confirm the app is yours. Scores eight categories, grades the app, and returns one prioritized list of what to fix first, with a full visual report that never leaves your browser.",
+  "name": "7it-guard",
+  "displayName": "7IT Guard",
+  "version": "0.3.0",
+  "description": "Checks a deployed web app from the outside before it ships, on your own machine: HTTPS and security headers, a public source map, email authentication of its domain, speed, accessibility, SEO and reliability, plus exposed files, keys in the browser code and the Supabase or Firebase backend once you confirm the app is yours. Scores eight categories, grades the app, and returns one prioritized list of what to fix first, with a full visual report that never leaves your browser. When the app publishes an MCP server, says whether it is on 7Maps.",
   "author": {
     "name": "7IT Solutions",
     "url": "https://7it.co.il/"
   },
-  "homepage": "https://7it.co.il/tools/ship-check/",
-  "repository": "https://github.com/XLSV777/shipcheck",
+  "homepage": "https://7it.co.il/tools/guard/",
+  "repository": "https://github.com/XLSV777/7it-guard",
   "license": "MIT",
   "keywords": [
     "security",
@@ -19,14 +19,14 @@
     "web-performance",
     "seo"
   ],
-  "privacyPolicyUrl": "https://7it.co.il/privacy/#ship-check",
-  "documentationUrl": "https://7it.co.il/tools/ship-check/",
-  "supportUrl": "https://github.com/XLSV777/shipcheck/issues",
+  "privacyPolicyUrl": "https://7it.co.il/privacy/#guard",
+  "documentationUrl": "https://7it.co.il/tools/guard/",
+  "supportUrl": "https://github.com/XLSV777/7it-guard/issues",
   "userConfig": {
     "fix_key": {
       "type": "string",
-      "title": "Fix playbook key (optional)",
-      "description": "Leave empty unless you have a Ship Check fix key. With a key, /shipcheck:fix fetches one strict fix playbook for your report; without one, it fixes from the report alone. Kept in your system's secure storage.",
+      "title": "7IT key (optional)",
+      "description": "Leave empty unless you have a 7IT key. With a key, /7it-guard:fix fetches one strict fix playbook for your report; without one, it fixes from the report alone. Kept in your system's secure storage.",
       "required": false,
       "sensitive": true
     }

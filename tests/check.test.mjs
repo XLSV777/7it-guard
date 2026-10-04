@@ -1,4 +1,4 @@
-// Tests for scripts/shipcheck.mjs and scripts/fix-server.mjs. Run: node --test tests/
+// Tests for scripts/check.mjs and scripts/fix-server.mjs. Run: node --test tests/check.test.mjs
 // Nothing here touches the internet: every "https://<host>/..." request is routed to a local
 // mock server by host name, DNS answers come from a stub, and the TLS check is stubbed.
 import { test } from 'node:test';
@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { inflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { runCheck, textReport, reportLink, normalizeTarget, localToken, mailDomainOf, gradeOf } from '../scripts/shipcheck.mjs';
+import { runCheck, textReport, reportLink, normalizeTarget, localToken, mailDomainOf, gradeOf, mapsKey, mapsHash } from '../scripts/check.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -138,6 +138,8 @@ test('weak app, public checks: finds the gaps and never probes deep paths', asyn
     for (const deep of ['/.env', '/.git/HEAD', '/7it-verify.txt']) assert.ok(!paths.includes(deep), `public mode must not request ${deep}`);
     assert.ok(!m.log.some((l) => /supabase/.test(l.host)), 'public mode must not touch the backend');
     assert.ok(!m.log.some((l) => l.path === '/assets/index-abc12345.js' && l.method === 'GET'), 'public mode must not download bundles to scan them');
+    assert.deepEqual(r.mcp, [], 'a single-page app answering every path is not an MCP server');
+    assert.ok(!m.log.some((l) => l.host === '7it.co.il'), 'no request to 7IT when the app publishes no MCP server');
     // Fix-before-shipping first, by severity.
     const order = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
     for (let i = 1; i < r.findings.length; i++) assert.ok(order[r.findings[i - 1].sev] <= order[r.findings[i].sev]);
@@ -214,8 +216,9 @@ test('text report: order, link and the closing line', async () => {
     const r = await runCheck(WEAK, { deps: { fetchImpl: m.fetchImpl, dns: weakDns, tls: tlsOk, env: {} } });
     const t = textReport(r);
     assert.ok(t.indexOf('Fix before shipping') < t.indexOf('Fix soon'));
-    assert.match(t, /nothing sent to 7IT/);
-    assert.match(t, /Full report: https:\/\/7it\.co\.il\/tools\/ship-check\/report\/#r=[A-Za-z0-9_-]+\n/);
+    assert.match(t, /nothing about the app sent to 7IT/);
+    assert.match(t, /^7IT Guard \d+\.\d+\.\d+ · /);
+    assert.match(t, /Full report: https:\/\/7it\.co\.il\/tools\/guard\/report\/#r=[A-Za-z0-9_-]+\n/);
     const last = t.trim().split('\n').pop();
     assert.match(last, /^Not checked from outside: load and traffic spikes, scale limits, architecture/);
     assert.match(last, /https:\/\/7it\.co\.il\/services\/ai-built-apps\/$/);
@@ -241,6 +244,54 @@ test('report link: decodes, stays under 8 KB however long the report', () => {
   assert.equal(JSON.parse(inflateRawSync(Buffer.from(small.split('#r=')[1], 'base64url')).toString()).f.length, 5);
 });
 
+// ------------------------------------------------------------------ an app that publishes an MCP server
+const MCPAPP = 'agent-app.com';
+function mcpRoutes({ listed }) {
+  const page = '<!doctype html><html lang="en"><head><title>Agent App: tools for agents</title></head><body><main><h1>Agent</h1></main></body></html>';
+  const key = mapsKey('https://' + MCPAPP + '/mcp');
+  const h = mapsHash(key);
+  return {
+    [`${MCPAPP}/`]: html(page),
+    [`${MCPAPP}/.well-known/mcp/server-card.json`]: send(200, { 'content-type': 'application/json' }, JSON.stringify({ name: 'x', remotes: [{ type: 'streamable-http', url: `https://${MCPAPP}/mcp` }] })),
+    [`${MCPAPP}/mcp`]: send(401, { 'content-type': 'application/json', 'www-authenticate': `Bearer resource_metadata="https://${MCPAPP}/.well-known/oauth-protected-resource/mcp"` }, '{}'),
+    // 7Maps' public list for the hash's first two characters; listed or not.
+    [`7it.co.il/7maps/known/${h.slice(0, 2)}.json`]: send(200, { 'content-type': 'application/json' }, JSON.stringify({ v: 1, prefix: h.slice(0, 2), hashes: listed ? [h.slice(0, 2) + '0000000000', h] : [h.slice(0, 2) + '0000000000'] })),
+  };
+}
+
+test('app with an MCP server: says whether it is on 7Maps without sending its address', async () => {
+  assert.equal(mapsKey('https://WWW.Example.com:8443/mcp/'), 'example.com/mcp');
+  assert.equal(mapsHash('example.com/mcp').length, 12);
+  for (const listed of [true, false]) {
+    const m = await mockServer(mcpRoutes({ listed }));
+    try {
+      const r = await runCheck(MCPAPP, { deps: { fetchImpl: m.fetchImpl, dns: weakDns, tls: tlsOk, env: {} } });
+      assert.equal(r.mcp.length, 1);
+      assert.equal(r.mcp[0].url, `https://${MCPAPP}/mcp`);
+      assert.equal(r.mcp[0].on_7maps, listed);
+      const toMaps = m.log.filter((l) => l.host === '7it.co.il');
+      assert.equal(toMaps.length, 1, 'one download of one bucket');
+      assert.match(toMaps[0].path, /^\/7maps\/known\/[0-9a-f]{2}\.json\?via=guard$/);
+      for (const l of toMaps) assert.ok(!JSON.stringify(l).includes(MCPAPP), 'the address never goes to 7IT');
+      const t = textReport(r);
+      if (listed) {
+        assert.ok(t.includes(`on 7Maps, the public map of MCP servers: https://7it.co.il/7maps/s/${MCPAPP}/mcp`));
+        assert.ok(t.includes('verify ownership on 7Maps so agents see it is yours: https://7it.co.il/7maps/claim/'));
+      } else assert.ok(t.includes('not on 7Maps yet. Its owner can add it: https://7it.co.il/7maps/submit/'));
+      assert.ok(!/\bfree\b|\$\d|price|discount|offer/i.test(t), 'no prices or offers');
+      const p = JSON.parse(inflateRawSync(Buffer.from(reportLink(r).split('#r=')[1], 'base64url')).toString());
+      assert.deepEqual(p.mc, [[`https://${MCPAPP}/mcp`, listed ? 1 : 0]]);
+    } finally { await m.close(); }
+  }
+  const m = await mockServer(mcpRoutes({ listed: true }));
+  try {
+    const r = await runCheck(MCPAPP, { maps: false, deps: { fetchImpl: m.fetchImpl, dns: weakDns, tls: tlsOk, env: {} } });
+    assert.equal(r.mcp[0].on_7maps, null);
+    assert.ok(!m.log.some((l) => l.host === '7it.co.il'), '--no-7maps makes no request to 7IT');
+    assert.match(textReport(r), /not looked up on 7Maps in this run/);
+  } finally { await m.close(); }
+});
+
 // ------------------------------------------------------------------ the fix playbook server
 function rpc(env) {
   const child = spawn(process.execPath, [join(here, '..', 'scripts', 'fix-server.mjs')], { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'inherit'] });
@@ -264,27 +315,27 @@ test('fix server: no key means no request; with a key it sends only key, ids and
     res.end(JSON.stringify({ playbook: '# Strict playbook\n1. CSP with nonces' }));
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  const url = `http://127.0.0.1:${server.address().port}/shipcheck/playbook`;
+  const url = `http://127.0.0.1:${server.address().port}/guard/playbook`;
   try {
-    const a = rpc({ SHIPCHECK_FIX_KEY: '', SHIPCHECK_PLAYBOOK_URL: url });
+    const a = rpc({ GUARD_FIX_KEY: '', GUARD_PLAYBOOK_URL: url });
     const init = await a.call('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } });
     assert.equal(init.result.protocolVersion, '2025-06-18');
     const list = await a.call('tools/list', {});
     assert.deepEqual(list.result.tools.map((t) => t.name), ['get_fix_playbook']);
     assert.equal(list.result.tools[0].annotations.readOnlyHint, true);
     const none = await a.call('tools/call', { name: 'get_fix_playbook', arguments: { finding_ids: ['csp_missing'] } });
-    assert.match(none.result.content[0].text, /No Ship Check fix key is set, so no request was made/);
+    assert.match(none.result.content[0].text, /No 7IT key is set, so no request was made/);
     assert.ok(!/\$\d|price|\bfree\b/i.test(none.result.content[0].text));
     a.close();
     assert.equal(seen.length, 0);
 
-    const b = rpc({ SHIPCHECK_FIX_KEY: 'test-key-123', SHIPCHECK_PLAYBOOK_URL: url });
+    const b = rpc({ GUARD_FIX_KEY: 'test-key-123', GUARD_PLAYBOOK_URL: url });
     await b.call('initialize', { protocolVersion: '2099-01-01', capabilities: {}, clientInfo: { name: 't', version: '1' } });
     const got = await b.call('tools/call', { name: 'get_fix_playbook', arguments: { finding_ids: ['csp_missing', 'no_dmarc', 'BAD ID'], stack: ['vercel'] } });
     assert.match(got.result.content[0].text, /Strict playbook/);
     b.close();
     assert.equal(seen.length, 1);
     assert.equal(seen[0].auth, 'Bearer test-key-123');
-    assert.equal(decodeURIComponent(seen[0].url), '/shipcheck/playbook?f=csp_missing,no_dmarc&s=vercel');
+    assert.equal(decodeURIComponent(seen[0].url), '/guard/playbook?f=csp_missing,no_dmarc&s=vercel');
   } finally { await new Promise((r) => server.close(r)); }
 });
