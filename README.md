@@ -13,8 +13,8 @@ The check is one readable Node script, [`skills/guard/scripts/check.mjs`](skills
 Eight categories, each scored out of 100, an overall grade (A to F; anything exposed right now caps it), and severity on every finding:
 
 - **Security**: HTTPS and the http-to-https redirect, HSTS, Content Security Policy (and whether it still allows inline scripts), clickjacking protection, nosniff, referrer and permissions policy, cross-origin isolation, cookie flags, mixed content, version banners, security.txt.
-- **Secrets**: a public JavaScript source map; on your own app, also keys shaped like OpenAI, Anthropic, Stripe, GitHub, AWS, SendGrid, Slack and other secret keys in the code sent to browsers, and a Supabase service role key.
-- **Data exposure** (your own app only): `.env` files, a `.git` folder, backups, admin tools, directory listings and an open session list of an MCP gateway (MetaMCP); what an anonymous visitor can read in the app's Supabase project (table and bucket names with row counts, open sign-up) or Firebase project (open Realtime Database, listable storage).
+- **Secrets**: a public JavaScript source map; on your own app, also keys shaped like OpenAI, Anthropic, Stripe, GitHub, AWS, SendGrid, Slack and other secret keys in the code sent to browsers, and Supabase secrets (the service role key, an `sb_secret_` key, a database password). Each is reported by its kind and file, never its text.
+- **Data exposure** (your own app only): `.env` files, a `.git` folder, backups, admin tools, directory listings and an open session list of an MCP gateway (MetaMCP); and whether the app's own browser code uses Supabase or Firebase. **This check never reads your data**: no request goes to the app's database, no table names, no counts, no rows. For Supabase, the report gives the guided Security Advisor step instead: open the Security Advisor in your own Supabase account, copy one prompt into your AI builder (it turns on Row Level Security with owner-only rules and shows you the SQL before it runs), and run the Advisor again. For Firebase, it points you to the Security Rules in your own console.
 - **Email**: SPF, DMARC and DKIM (common selectors) of the app's domain, from public DNS. Skipped on shared platform addresses such as `myapp.lovable.app`.
 - **Performance**: time to first byte, HTML weight, compression, script count and weight, render-blocking scripts, caching of versioned files. Google PageSpeed scores too, if you set your own key (below).
 - **Accessibility** (from the HTML): page language, image text alternatives, form labels, button and link names, zoom, main heading and landmark. Colour contrast and keyboard use cannot be checked from outside; the report says so.
@@ -69,7 +69,7 @@ node skills/guard/scripts/check.mjs myapp.com --no-7maps   # skip the 7Maps look
 You can run the script yourself too. A sample terminal report:
 
 ```
-7IT Guard 0.3.0 · app.example.com · 2026-10-04 · run on this machine, nothing about the app sent to 7IT
+7IT Guard 0.3.1 · app.example.com · 2026-10-04 · run on this machine, nothing about the app sent to 7IT
 Grade D (64/100) · 1 to fix before shipping · 6 to fix soon
 
   Security        74  ███████░░░  4 issues
@@ -85,7 +85,7 @@ Full report: https://7it.co.il/tools/guard/report/#r=...
 Not checked from outside: load and traffic spikes, scale limits, architecture, business logic behind the login, cost at scale, backups and recovery, compliance. A senior review covers these: https://7it.co.il/services/ai-built-apps/
 ```
 
-**The full report link** opens a visual report (scores, severity, the fix list with copyable snippets for Vercel, Netlify, Next.js and nginx, SPF and DMARC records, Supabase row level security policies, and a print or save-as-PDF button). The results travel inside the link after the `#`, which browsers never send to a server: the page decodes them in your browser. 7IT's server only sends the empty page.
+**The full report link** opens a visual report (scores, severity, the fix list with copyable snippets for Vercel, Netlify, Next.js and nginx, SPF and DMARC records, and a print or save-as-PDF button). The results travel inside the link after the `#`, which browsers never send to a server: the page decodes them in your browser. 7IT's server only sends the empty page.
 
 **Deep checks need proof that the app is yours.** The report prints an inert token. Add it to your app as a meta tag on the home page (`<meta name="7it-site-verification" content="7it-verify-...">`) or as a file at `/7it-verify.txt`, deploy, and run the check again with `--owner`. The token runs nothing and can be removed afterwards; the same token also unlocks the deep scan on [7it.co.il/tools/app-security](https://7it.co.il/tools/app-security/). The skill tells Claude to use `--owner` or add a token only when you say the app is yours.
 
@@ -95,12 +95,12 @@ Not checked from outside: load and traffic spikes, scale limits, architecture, b
 
 ## What it sends, and what it never sends
 
-- **Every check runs on your machine.** Requests go from your machine straight to the app you name (its pages, headers, certificate and a few well-known paths), to public DNS (for the email records), and, with `--owner` on an app that carries the token, to the Supabase or Firebase project the app's own browser code points at, using the app's own public key, read-only. The report ends with the count of requests and the hosts they went to.
+- **Every check runs on your machine.** Requests go from your machine straight to the app you name (its pages, headers, certificate and a few well-known paths), and to public DNS (for the email records). No request ever goes to the app's database (Supabase or Firebase), with or without `--owner`. The report ends with the count of requests and the hosts they went to.
 - **Nothing about the app is sent to 7IT** by a check. Not the address, not the results, not your code.
 - **The 7Maps lookup** happens only when the app publishes an MCP server. The check then computes the server's 7Maps key and its hash on your machine (SHA-256, first 12 characters, the same scheme 7Maps states in its public lists) and downloads one public list, `https://7it.co.il/7maps/known/<first 2 characters of the hash>.json`: the hashes of the servers on the map that start with those 2 characters (at most 3 such downloads per check). The request carries those 2 characters and `?via=guard`, never the address; the comparison happens on your machine. `--no-7maps` skips it. 7IT counts these downloads (no address, no hash) and keeps the standard host logs.
 - **The report link** carries the results in the URL fragment, which browsers do not send to servers. Opening it loads a static page from 7it.co.il; Google Analytics on that page records the page address without the fragment.
 - **The 7IT key**, if you set one, is kept in your system's secure storage by Claude Code and handed only to the plugin's small local fix server ([`scripts/fix-server.mjs`](scripts/fix-server.mjs)). It makes no request on its own. When `/7it-guard:fix` asks it for the strict playbook, it makes ONE request to `https://7it.co.il/guard/playbook` with the key, the ids of the findings (for example `csp_missing,no_dmarc`) and the detected platform names (for example `vercel,supabase`). Never the app's address, the report, your code or the conversation. Without a key it makes no request at all. 7IT keeps a usage count per key and a usage record (no report, no address).
-- **What a deep check reads**: the response to well-known file paths (first 4 KB, matched on shape, reported as a path, never the content); the app's own scripts (in memory only, to look for key shapes; a key is reported by type and file, never its value); Supabase table names from the API schema and a count-only request per table (never a row); storage bucket listings limited to one item, reported as the bucket name; Firebase Realtime Database key count. Nothing is written anywhere and nothing is kept.
+- **What a deep check reads**: the response to well-known file paths (first 4 KB, matched on shape, reported as a path, never the content); the app's own scripts (in memory only, to look for key shapes; a key is reported by type and file, never its value); the Supabase project or Firebase config named in that same code (the project address is public; it is used only for the links to your own dashboard). Nothing inside the database: no table names, no counts, no rows, no settings, no file listings. Nothing is written anywhere and nothing is kept.
 
 Privacy policy: https://7it.co.il/privacy/#guard
 

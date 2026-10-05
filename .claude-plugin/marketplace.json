@@ -8,7 +8,7 @@
     {
       "name": "7it-guard",
       "source": "./",
-      "description": "Checks a deployed web app from the outside before it ships, on your own machine: HTTPS and security headers, a public source map, email authentication, speed, accessibility, SEO and reliability, plus exposed files, keys in the browser code and the Supabase or Firebase backend once you confirm the app is yours. One graded, prioritized report.",
+      "description": "Checks a deployed web app from the outside before it ships, on your own machine: HTTPS and security headers, a public source map, email authentication, speed, accessibility, SEO and reliability, plus exposed files and keys in the browser code once you confirm the app is yours, with guided steps to check Supabase or Firebase rules in your own account (it never reads your data). One graded, prioritized report.",
       "category": "security"
     }
   ],

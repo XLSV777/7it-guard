@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { inflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { runCheck, textReport, reportLink, normalizeTarget, localToken, mailDomainOf, gradeOf, mapsKey, mapsHash, mcpSessionsShape } from '../skills/guard/scripts/check.mjs';
+import { runCheck, textReport, reportLink, normalizeTarget, localToken, mailDomainOf, gradeOf, mapsKey, mapsHash, mcpSessionsShape, supabaseIn } from '../skills/guard/scripts/check.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -52,7 +52,9 @@ const tlsOk = async () => ({ days: 80, valid: true, reason: '', issuer: 'Test CA
 const jwt = (payload) => ['eyJhbGciOiJIUzI1NiJ9', Buffer.from(JSON.stringify(payload)).toString('base64url'), 'c2lnbmF0dXJlLXNpZ25hdHVyZQ'].join('.');
 
 // A weak app: no security headers, plain HTTP still served, a public source map, accessibility
-// and SEO gaps, no DMARC. Plus a Supabase backend and leaked files for the owner tests.
+// and SEO gaps, no DMARC. Plus a Supabase backend and leaked files for the owner tests. The
+// Supabase routes answer as an open project would, so any request to it would show in the log;
+// the tests assert that none is ever made.
 const WEAK = 'leaky-app.com';
 const REF = 'abcdefghijklmnopqrst';
 const ANON = jwt({ iss: 'supabase', ref: REF, role: 'anon' });
@@ -157,32 +159,87 @@ test('owner flag without the token on the app: no deep checks', async () => {
   } finally { await m.close(); }
 });
 
-test('owner with the token: exposed files, secrets and Supabase, names and counts only', async () => {
+test('owner with the token: exposed files, secrets, and Supabase passively (never a request to the database)', async () => {
   const m = await mockServer(weakRoutes({ token: true }));
   try {
     const r = await runCheck(WEAK, { owner: true, deps: { fetchImpl: m.fetchImpl, dns: weakDns, tls: tlsOk, env: {} } });
     assert.equal(r.ownership, 'verified_meta');
     const got = ids(r);
-    for (const id of ['exposed_env', 'secret_openai', 'sb_table', 'sb_signup', 'sb_bucket']) assert.ok(got.includes(id), `expected ${id}; got ${got.join(',')}`);
+    for (const id of ['exposed_env', 'secret_openai', 'sb_advisor']) assert.ok(got.includes(id), `expected ${id}; got ${got.join(',')}`);
+    for (const id of ['sb_table', 'sb_signup', 'sb_bucket', 'secret_sb_service']) assert.ok(!got.includes(id), `${id} is gone (no database reads; the anon key is not a secret)`);
     // .git/HEAD answers with the home page (single-page app): not a finding.
     assert.ok(!got.includes('exposed_git'));
-    const table = r.findings.find((f) => f.id === 'sb_table');
-    assert.equal(table.sev, 'critical');
-    assert.match(table.title, /"profiles" \(5 rows\)/);
-    assert.ok(!r.findings.some((f) => /notes/.test(f.title)), 'an empty or protected table is not reported');
-    assert.deepEqual(r.tables, ['profiles']);
-    assert.deepEqual(r.buckets, ['avatars']);
+    assert.equal(r.findings.find((f) => f.id === 'sb_advisor').sev, 'medium');
+    assert.equal(r.supabase.found, true);
+    assert.equal(r.supabase.project, REF);
+    assert.deepEqual(r.supabase.secrets, []);
+    assert.ok(!('tables' in r) && !('buckets' in r), 'no table or bucket list in the report');
+    assert.ok(r.stack.includes('supabase'));
     assert.equal(r.grade, 'F');
-    // Table checks are count-only HEAD requests; no row is ever requested.
-    const tableCalls = m.log.filter((l) => /supabase/.test(l.host) && /^\/rest\/v1\/[a-z]/.test(l.path));
-    assert.ok(tableCalls.length >= 2 && tableCalls.every((l) => l.method === 'HEAD'));
-    // Bucket listing asks for one item at most.
-    // No key value, file content or row anywhere in the output, the text or the link.
+    // The guided Security Advisor step, with the site's AI builder prompt, and the plain promise.
+    const t = textReport(r);
+    assert.ok(t.includes('This check never reads your data.'));
+    assert.ok(t.includes(`https://supabase.com/dashboard/project/${REF}/advisors/security`));
+    assert.ok(t.includes('Open your Supabase project, then Advisors, then Security Advisor'));
+    assert.ok(t.includes(`My app ${WEAK} uses Supabase. Turn on Row Level Security for every table in the public schema.`));
+    assert.ok(t.includes('Write the changes as a migration and show me the SQL before you apply it.'));
+    assert.match(r.categories.data.note, /never reads your data/);
+    // No key value or file content anywhere in the output, the text or the link.
     const link = reportLink(r);
     const payload = inflateRawSync(Buffer.from(link.split('#r=')[1], 'base64url')).toString();
-    for (const out of [JSON.stringify(r), textReport(r), payload]) {
-      for (const secret of [FAKE_OPENAI, ANON, 'postgres://secret', 'x.png']) assert.ok(!out.includes(secret), `leaked ${secret.slice(0, 12)}`);
+    for (const out of [JSON.stringify(r), t, payload]) {
+      for (const secret of [FAKE_OPENAI, ANON, 'postgres://secret']) assert.ok(!out.includes(secret), `leaked ${secret.slice(0, 12)}`);
     }
+    assert.ok(!('tb' in JSON.parse(payload)) && !('bk' in JSON.parse(payload)), 'the link carries no table or bucket list');
+  } finally { await m.close(); }
+});
+
+test('the database boundary: no request to a *.supabase.co REST path with table names, no row counts in any output', async () => {
+  const m = await mockServer(weakRoutes({ token: true }));
+  try {
+    const runs = [
+      await runCheck(WEAK, { deps: { fetchImpl: m.fetchImpl, dns: weakDns, tls: tlsOk, env: {} } }),
+      await runCheck(WEAK, { owner: true, deps: { fetchImpl: m.fetchImpl, dns: weakDns, tls: tlsOk, env: {} } }),
+    ];
+    const toSupabase = m.log.filter((l) => /(^|\.)supabase\.(co|in)$/.test(l.host || ''));
+    assert.ok(!toSupabase.some((l) => /^\/rest\/v1\/[A-Za-z_]/.test(l.path)), 'no REST path with a table name');
+    assert.ok(!toSupabase.some((l) => /^\/rest\//.test(l.path)), 'no REST request at all');
+    assert.deepEqual(toSupabase, [], 'no request of any kind to the Supabase project');
+    assert.ok(!m.log.some((l) => /firebaseio\.com|firebasedatabase\.app|firebasestorage\.googleapis\.com/.test(l.host || '')), 'no request to Firebase');
+    for (const r of runs) {
+      const payload = inflateRawSync(Buffer.from(reportLink(r).split('#r=')[1], 'base64url')).toString();
+      for (const out of [JSON.stringify(r), textReport(r), payload]) {
+        assert.ok(!/\d[\d,]*\s+rows?\b/i.test(out), 'no row count');
+        assert.ok(!/tables? checked|"profiles"|"notes"|"avatars"/i.test(out), 'no table or bucket name');
+      }
+    }
+  } finally { await m.close(); }
+});
+
+test('Supabase secrets are reported by kind only, with the rotate steps and the secret key prompt', async () => {
+  const SERVICE = jwt({ iss: 'supabase', ref: REF, role: 'service_role' });
+  const SB_SECRET = 'sb_secret_' + 'Q9w8E7r6T5'.repeat(3);
+  const DB_URL = `postgresql://postgres.${REF}:Hunter2Pass99@aws-0-eu-central-1.pooler.supabase.com:6543/postgres`;
+  const PLACEHOLDER = `postgresql://postgres:[YOUR-PASSWORD]@db.${REF}.supabase.co:5432/postgres`;
+  const routes = { ...weakRoutes({ token: true }), [`${WEAK}/assets/index-abc12345.js`]: send(200, { 'content-type': 'application/javascript' }, `const a="${SERVICE}";const b="${SB_SECRET}";const c="${DB_URL}";const d="${PLACEHOLDER}";`) };
+  const m = await mockServer(routes);
+  try {
+    const r = await runCheck(WEAK, { owner: true, deps: { fetchImpl: m.fetchImpl, dns: weakDns, tls: tlsOk, env: {} } });
+    const got = ids(r);
+    for (const id of ['secret_sb_service', 'secret_sb_secret', 'secret_sb_db_url', 'sb_advisor']) assert.ok(got.includes(id), `expected ${id}; got ${got.join(',')}`);
+    assert.deepEqual(r.supabase.secrets, ['service_role', 'sb_secret', 'db_url']);
+    assert.equal(r.supabase.project, REF);
+    const t = textReport(r);
+    assert.ok(t.includes(`https://supabase.com/dashboard/project/${REF}/settings/api-keys`));
+    assert.ok(t.includes(`is in the code that ${WEAK} sends to browsers. Remove it from every file sent to the browser.`));
+    assert.ok(t.includes('This check never reads your data.'));
+    const payload = inflateRawSync(Buffer.from(reportLink(r).split('#r=')[1], 'base64url')).toString();
+    for (const out of [JSON.stringify(r), t, payload]) for (const s of [SERVICE, SB_SECRET, 'Hunter2Pass99', DB_URL]) assert.ok(!out.includes(s), 'no key text in any output');
+    assert.ok(!m.log.some((l) => /supabase/.test(l.host || '')), 'no request to the Supabase project');
+    // A placeholder password alone is not a secret.
+    assert.deepEqual(supabaseIn(`const d="${PLACEHOLDER}"`).secrets, []);
+    assert.deepEqual(supabaseIn('nothing here'), { found: false, ref: null, secrets: [] });
+    assert.equal(supabaseIn('import "@supabase/supabase-js"').found, true);
   } finally { await m.close(); }
 });
 
@@ -266,7 +323,7 @@ test('text report: order, link and the closing line', async () => {
 });
 
 test('report link: decodes, stays under 8 KB however long the report', () => {
-  const base = { version: '0.2.0', host: 'big-app.com', checked_at: '2026-10-04T10:00:00.000Z', grade: 'F', score: 20, ownership: 'verified_meta', metrics: { ttfb_ms: 100 }, stack: ['vercel'], email_domain: 'big-app.com', tables: ['a'], buckets: [], categories: { security: { score: 10, note: '' } } };
+  const base = { version: '0.2.0', host: 'big-app.com', checked_at: '2026-10-04T10:00:00.000Z', grade: 'F', score: 20, ownership: 'verified_meta', metrics: { ttfb_ms: 100 }, stack: ['vercel'], email_domain: 'big-app.com', categories: { security: { score: 10, note: '' } } };
   const findings = Array.from({ length: 300 }, (_, i) => ({ id: 'csp_missing', cat: 'security', sev: ['critical', 'high', 'medium', 'low', 'info'][i % 5], title: `Finding ${i} ${'x'.repeat(i % 50)} ${Math.random()}`, fix: `Fix ${i} ${Math.random()}` }));
   const link = reportLink({ ...base, findings });
   const enc = link.split('#r=')[1];

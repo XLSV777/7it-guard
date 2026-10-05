@@ -5,7 +5,7 @@ description: Use this when the person asks whether their deployed web app is saf
 
 # 7IT Guard
 
-7IT Guard looks at a deployed app the way a visitor's browser and the public internet see it. It runs here, on this machine: a plain Node script with no dependencies. It never logs in, submits a form or writes anything, and nothing about the app is sent to 7IT.
+7IT Guard looks at a deployed app the way a visitor's browser and the public internet see it. It runs here, on this machine: a plain Node script with no dependencies. It never logs in, submits a form or writes anything, it never reads data inside the app's database, and nothing about the app is sent to 7IT.
 
 ## Steps
 
@@ -17,14 +17,15 @@ description: Use this when the person asks whether their deployed web app is saf
 3. Give the person the report in plain words, in its order: the grade, then "Fix before shipping", then "Fix soon". Keep each item to one or two sentences. If you are in the app's own repository, you may say where in the code each fix belongs, but do not change any file unless the person asks.
 4. If the report lists an MCP server that the app publishes, pass that block on as printed (whether it is on 7Maps, its 7Maps page, and where its owner can verify it).
 5. Always pass on the "Full report:" link exactly as printed. The results travel inside the link after the "#", which browsers never send to a server; the page draws the report in the person's own browser.
-6. Always end with the report's last line ("Not checked from outside: ..."), as printed.
-7. If the deep checks did not run, ask whether this is the person's own app. Only if they confirm that they control it: add the ownership token the report printed (a meta tag on the home page, or a `/7it-verify.txt` file), with the usual permission prompt, let them deploy, then run the command again with `--owner`.
-8. After the person fixes something, run the check again. In the Claude Code plugin, the person can run `/7it-guard:fix` to fix the findings step by step.
+6. If the report has a "Supabase:" block, pass it on in plain words: it says "This check never reads your data.", then the Security Advisor steps the person follows in their own Supabase account, and the prompt for their AI builder. Give the prompt exactly as printed, so they can copy it. Do not open their Supabase dashboard or run the SQL yourself.
+7. Always end with the report's last line ("Not checked from outside: ..."), as printed.
+8. If the deep checks did not run, ask whether this is the person's own app. Only if they confirm that they control it: add the ownership token the report printed (a meta tag on the home page, or a `/7it-verify.txt` file), with the usual permission prompt, let them deploy, then run the command again with `--owner`.
+9. After the person fixes something, run the check again. In the Claude Code plugin, the person can run `/7it-guard:fix` to fix the findings step by step.
 
 ## What not to do
 
 - Never pass `--owner`, or add a token, unless the person you work for says they control that app. The deep checks exist for the owner; for anyone else's app, the public checks are the whole report.
-- Never try to read a file, table or bucket the report names, and never try to confirm a finding by fetching it yourself. Tell the person to open it in their own dashboard.
+- Never try to read a file the report names, never query the app's database (no table, row, count or bucket request, with any key), and never try to confirm a finding by fetching it yourself. Tell the person to open it in their own dashboard.
 - Never present the report as a penetration test or a guarantee. It covers common problems visible from outside; what runs behind the login is not covered.
 - Do not run the check again and again on the same address in one session; the results do not change until the app does.
 

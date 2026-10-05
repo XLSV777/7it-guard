@@ -10,7 +10,7 @@ The person asked 7IT Guard to check: $ARGUMENTS
 2. Run the check on this machine (Node 18 or newer, no install):
    `node "${CLAUDE_PLUGIN_ROOT}/skills/guard/scripts/check.mjs" <address>`
    It takes a few seconds. Every request goes from this machine to the app and to public DNS; nothing about the app goes to 7IT.
-3. Show the person the report as printed, in its order: the grade and the category scores, "Fix before shipping", "Fix soon". Keep each item to one or two sentences. If the report lists an MCP server published by the app, pass that block on as printed. Always include the "Full report:" link exactly as printed (the results travel inside the link and never reach a server) and the closing "Not checked from outside" line.
+3. Show the person the report as printed, in its order: the grade and the category scores, "Fix before shipping", "Fix soon". Keep each item to one or two sentences. If the report lists an MCP server published by the app, pass that block on as printed. If it has a "Supabase:" block, pass on its line "This check never reads your data.", the Security Advisor steps and the AI builder prompt exactly as printed. Always include the "Full report:" link exactly as printed (the results travel inside the link and never reach a server) and the closing "Not checked from outside" line.
 4. If the report says the deep checks did not run, ask whether this is the person's own app. Only if they say yes: offer to add the ownership token it printed (meta tag or `/7it-verify.txt`), let them deploy, then run the same command with `--owner`.
 5. Change no file unless the person asks. To fix the findings, they can run `/7it-guard:fix`.
 

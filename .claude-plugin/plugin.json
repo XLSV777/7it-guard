@@ -1,8 +1,8 @@
 {
   "name": "7it-guard",
   "displayName": "7IT Guard",
-  "version": "0.3.0",
-  "description": "Checks a deployed web app from the outside before it ships, on your own machine: HTTPS and security headers, a public source map, email authentication of its domain, speed, accessibility, SEO and reliability, plus exposed files, keys in the browser code and the Supabase or Firebase backend once you confirm the app is yours. Scores eight categories, grades the app, and returns one prioritized list of what to fix first, with a full visual report that never leaves your browser. When the app publishes an MCP server, says whether it is on 7Maps.",
+  "version": "0.3.1",
+  "description": "Checks a deployed web app from the outside before it ships, on your own machine: HTTPS and security headers, a public source map, email authentication of its domain, speed, accessibility, SEO and reliability, plus exposed files and keys in the browser code once you confirm the app is yours, with guided steps to check Supabase or Firebase rules in your own account (it never reads your data). Scores eight categories, grades the app, and returns one prioritized list of what to fix first, with a full visual report that never leaves your browser. When the app publishes an MCP server, says whether it is on 7Maps.",
   "author": {
     "name": "7IT Solutions",
     "url": "https://7it.co.il/"

@@ -1,11 +1,10 @@
 #!/usr/bin/env node
-// 7IT Guard 0.3.0: checks a deployed web app from the outside, on YOUR machine.
+// 7IT Guard 0.3.1: checks a deployed web app from the outside, on YOUR machine.
 //
 //   node check.mjs <address> [--owner] [--json] [--no-link] [--no-7maps] [--token]
 //
-// Every request goes from this machine straight to the app you name, to public DNS, and
-// (only with --owner, on an app that carries the ownership token) to the Supabase or
-// Firebase project the app's own browser code points at. Nothing about the app is sent to
+// Every request goes from this machine straight to the app you name and to public DNS. No
+// request ever goes to the app's database (Supabase or Firebase). Nothing about the app is sent to
 // 7IT. One exception, and only when the app itself publishes an MCP server: the check
 // downloads one small public list from 7Maps (7it.co.il/7maps/known/<2 characters>.json)
 // to say whether that server is on the 7Maps map. The request carries only the first two
@@ -19,10 +18,11 @@
 //   3. reading the HTML                  7. the text report and the report link
 //   4. the public checks                 8. the command line
 //
-// What it never does: log in, submit a form, write anything anywhere, read a row of data,
-// download a file it found exposed, or keep any key it sees. Backend checks read table and
-// bucket NAMES and row COUNTS only, with the app's own public key, and only after the
-// person says the app is theirs AND the app carries the ownership token.
+// What it never does: log in, submit a form, write anything anywhere, read data inside the
+// app's database (no table names, no counts, no rows, no file listings), download a file it
+// found exposed, or keep any key it sees. On the owner's app (the person says the app is
+// theirs AND the app carries the ownership token) it names the backend the app's own browser
+// code uses and gives the Security Advisor steps the owner follows in their own account.
 
 import { Resolver } from 'node:dns/promises';
 import { deflateRawSync } from 'node:zlib';
@@ -32,7 +32,7 @@ import { pathToFileURL } from 'node:url';
 
 // ------------------------------------------------------------------ 1. settings and helpers
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.3.1';
 const UA = `Mozilla/5.0 (compatible; 7ITGuard/${VERSION}; +https://7it.co.il/tools/guard/)`;
 export const REPORT_BASE = 'https://7it.co.il/tools/guard/report/';
 export const REVIEW_URL = 'https://7it.co.il/services/ai-built-apps/';
@@ -707,64 +707,98 @@ function secretScan(files, add) {
   }
 }
 
-// Supabase: read-only. Table and bucket names and row counts only; the anon key comes from
-// the app's own browser code and is used for this run only.
-async function supabaseCheck(net, text, add, info) {
-  let ref = (text.match(/https:\/\/([a-z0-9]{20})\.supabase\.(?:co|in)/) || [])[1] || null;
-  let anonKey = null, anonIsJwt = false, serviceKey = false;
-  for (const m of text.matchAll(/eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g)) {
-    const p = decodeJwtPayload(m[0]);
-    if (!p || p.iss !== 'supabase') continue;
-    if (p.ref && !ref) ref = p.ref;
-    if (p.role === 'service_role') serviceKey = true;
-    else if (p.role === 'anon' && !anonKey) { anonKey = m[0]; anonIsJwt = true; }
-  }
-  const pub = (text.match(/sb_publishable_[A-Za-z0-9_-]{10,}/) || [])[0];
-  if (pub && !anonKey) anonKey = pub;
-  if (/sb_secret_[A-Za-z0-9_-]{10,}/.test(text)) serviceKey = true;
-  if (!ref && !serviceKey) return;
-  info.supabase = { tables_checked: 0, readable: 0 };
-  if (serviceKey) add('secret_sb_service', 'secrets', 'critical', 'The Supabase service role key is in the code sent to browsers.', 'Rotate it in the Supabase dashboard (Settings, API) and move the work that needs it to an edge function. With this key anyone can read and change every table.');
-  if (!ref || !anonKey) return;
+// The backend behind the app: PASSIVE ONLY. 7IT never reads data inside a customer's database.
+// The check sends no request at all to the app's Supabase or Firebase project: no table names, no
+// counts, no settings, no bucket or file listings. It reads only the code the app already sends to
+// every visitor (the home page and its own scripts, fetched above), notes which backend that code
+// names, and looks for secret key shapes there. A secret is reported by its KIND only; the matched
+// text never leaves the function that tests it. Whether a table is readable by anyone is answered
+// by the owner, inside their own Supabase account, with the Security Advisor steps below (the same
+// plain-words flow and AI builder prompt as 7it.co.il/tools/supabase-check/).
 
-  const base = `https://${ref}.supabase.co`;
-  const auth = anonIsJwt ? { apikey: anonKey, Authorization: `Bearer ${anonKey}` } : { apikey: anonKey };
-  // (a) The table names the API exposes (from its schema, never rows).
-  const spec = await net.json(`${base}/rest/v1/`, { headers: { ...auth, Accept: 'application/openapi+json' } });
-  const tables = spec.json?.paths ? Object.keys(spec.json.paths).map((p) => p.replace(/^\//, '')).filter((p) => p && !p.startsWith('rpc/')).slice(0, 30) : [];
-  info.supabase.tables_checked = tables.length;
-  // (b) One count-only HEAD per table: a count above zero means anonymous reads work.
-  const sensitive = /user|profile|customer|client|order|payment|invoice|message|chat|email|phone|address|account|subscription|lead|contact|session|token|secret|auth|member/i;
-  const readable = [];
-  await pool(tables, 4, async (table) => {
-    const r = await net.get(`${base}/rest/v1/${encodeURIComponent(table)}?select=*`, { method: 'HEAD', headers: { ...auth, Prefer: 'count=exact', 'Range-Unit': 'items', Range: '0-0' } });
-    if (r.status !== 200 && r.status !== 206) return;
-    const count = Number(((r.headers.get('content-range') || '').split('/')[1] || '').trim());
-    if (!Number.isFinite(count) || count <= 0) return;
-    readable.push(table);
-    add('sb_table', 'data', sensitive.test(table) ? 'critical' : 'high', `Anyone can read the table "${table}" (${count.toLocaleString('en-US')} rows).`, 'Turn on Row Level Security for this table and add a policy that lets each user read only their own rows. If the data is meant to be public, make sure no column in it is personal.');
-  });
-  info.supabase.readable = readable.length;
-  info.tables = readable.slice(0, 10);
-  // (c) Open sign-up.
-  const settings = await net.json(`${base}/auth/v1/settings`, { headers: { apikey: anonKey } });
-  if (settings.json?.disable_signup === false) add('sb_signup', 'data', 'medium', 'Anyone can create an account.', 'If the app is for a known group, turn off public sign-ups or require an invite. If sign-ups are intended, make sure every policy checks the user id, not just "authenticated".');
-  // (d) Buckets whose files an anonymous visitor can list (listing only, limit 1).
-  const bk = await net.json(`${base}/storage/v1/bucket`, { headers: auth });
-  const buckets = Array.isArray(bk.json) ? bk.json.map((b) => b?.name).filter(Boolean).slice(0, 10) : [];
-  const listable = [];
-  await pool(buckets, 4, async (name) => {
-    const r = await net.json(`${base}/storage/v1/object/list/${encodeURIComponent(name)}`, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ prefix: '', limit: 1, offset: 0 }) });
-    if (Array.isArray(r.json) && r.json.length > 0) {
-      listable.push(name);
-      add('sb_bucket', 'data', 'high', `Anyone can list the files in the storage bucket "${name}".`, 'Add storage policies so only the owner can list and read objects, and make the bucket private unless its files are meant to be public.');
-    }
-  });
-  info.buckets = listable;
+const SB_REF_RE = /\bhttps?:\/\/([a-z0-9]{20})\.supabase\.(?:co|in)\b/;
+// Signs of the Supabase client when the project sits behind a custom domain.
+const SB_LIB_RE = /GoTrueClient|\bsb_publishable_[A-Za-z0-9_-]{10,}|supabase-js/;
+const SB_JWT_RE = /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g;
+// The new-style secret key (the publishable sb_publishable_ key is meant for browsers and is not matched).
+const SB_SECRET_RE = /\bsb_secret_[A-Za-z0-9_-]{20,}/;
+// A Postgres connection address to a Supabase database that carries a real password (placeholders
+// such as [YOUR-PASSWORD] are not a password).
+const SB_DB_URL_RE = /\bpostgres(?:ql)?:\/\/[^\s"'`:@/]{1,80}:([^\s"'`@/]{6,200})@[A-Za-z0-9.-]{0,120}supabase\.(?:co|com|in)\b/g;
+
+// Does the text name a Supabase project, and which secret KINDS does it carry? Returns the project
+// ref (public: it is the project's own address, used only for the owner's dashboard links) and kind
+// names; never a key.
+export function supabaseIn(text) {
+  const t = String(text || '');
+  let ref = (SB_REF_RE.exec(t) || [])[1] || null;
+  let found = !!ref;
+  const kinds = new Set();
+  for (const m of t.matchAll(SB_JWT_RE)) {
+    const p = decodeJwtPayload(m[0]);
+    if (!p) continue;
+    if (p.role === 'service_role') kinds.add('service_role');
+    if (p.iss === 'supabase') { found = true; if (!ref && typeof p.ref === 'string' && /^[a-z0-9]{20}$/.test(p.ref)) ref = p.ref; }
+  }
+  if (SB_SECRET_RE.test(t)) kinds.add('sb_secret');
+  for (const m of t.matchAll(SB_DB_URL_RE)) if (!/[[\]<>{}]|password|your-?pass/i.test(m[1])) { kinds.add('db_url'); break; }
+  if (!found && (SB_LIB_RE.test(t) || kinds.size)) found = true;
+  return { found, ref, secrets: ['service_role', 'sb_secret', 'db_url'].filter((k) => kinds.has(k)) };
 }
 
-// Firebase: read-only. Realtime Database shallow read (key COUNT only) and storage listing (limit 1).
-async function firebaseCheck(net, text, add, info) {
+const SB_DASH = (ref, page) => `https://supabase.com/dashboard/project/${ref || '_'}/${page}`;
+const SB_SECRET_TEXT = {
+  service_role: ['secret_sb_service', 'The Supabase service role key is in the code sent to browsers.'],
+  sb_secret: ['secret_sb_secret', 'A Supabase secret key (sb_secret_) is in the code sent to browsers.'],
+  db_url: ['secret_sb_db_url', 'A Supabase database password, inside a connection address, is in the code sent to browsers.'],
+};
+// The AI builder prompts: the same text as the site's self-help entries supabase_rls and
+// supabase_secret_key (7IT-LANDING data/guard-selfhelp/catalog.json), with the app's address filled in.
+export const SB_RLS_PROMPT = 'My app {site} uses Supabase. Turn on Row Level Security for every table in the public schema. For each table, add policies so a signed-in user can select, insert, update and delete only their own rows (compare auth.uid() with the owner column, usually user_id). A table that is meant to be public gets a select-only policy and no write access. Never use the service role key or any secret key in browser code. Then fix each warning the Supabase Security Advisor lists. Write the changes as a migration and show me the SQL before you apply it. Do not delete any data. Do not change anything unrelated. When you are done, tell me in plain words what you changed.';
+export const SB_SECRET_PROMPT = 'A Supabase secret (the service role key, an sb_secret_ key or the database password) is in the code that {site} sends to browsers. Remove it from every file sent to the browser. Move any code that needs it to a server function or a Supabase Edge Function that reads it from a server-side environment variable. The browser keeps only the publishable or anon key. I will create the new key myself; use it only on the server. Do not delete any data. Do not change anything unrelated. When you are done, tell me in plain words what you changed.';
+export const SB_NEVER_READS = 'This check never reads your data.';
+
+// The guided Security Advisor step, in plain words (the supabase_rls flow), for the text report and --json.
+export function supabaseGuide(host, sb) {
+  const advisor = SB_DASH(sb.ref, 'advisors/security');
+  const guide = {
+    never_reads: SB_NEVER_READS,
+    title: 'Make sure your Supabase data is not readable by anyone',
+    means: 'If a table has no row rules, anyone with your public key can read it.',
+    advisor_url: advisor,
+    steps: [
+      `Open your Supabase project, then Advisors, then Security Advisor (${advisor}). If it lists no security warnings, you are done.`,
+      'Copy the prompt below into your AI builder. It turns on Row Level Security and owner-only rules.',
+      'Run the Security Advisor again. Check that each warning is gone.',
+      'If warnings are still listed, paste them into your AI builder, under the same prompt.',
+    ],
+    ai_prompt: SB_RLS_PROMPT.replace('{site}', host),
+  };
+  if (sb.secrets.length) {
+    guide.secret_steps = [
+      `In Supabase, open Project Settings and its keys page (${SB_DASH(sb.ref, 'settings/api-keys')}). Create a new secret key and delete the exposed one. For a database password: Project Settings, then Database, and reset the password.`,
+      'Ask your AI builder to move it out of browser code, to the server, with the secret key prompt.',
+      'Then check your data rules with the Security Advisor steps.',
+    ];
+    guide.secret_prompt = SB_SECRET_PROMPT.replace('{site}', host);
+  }
+  return guide;
+}
+
+function supabaseCheck(host, text, add, info) {
+  const sb = supabaseIn(text);
+  if (!sb.found) return;
+  for (const kind of sb.secrets) {
+    const [id, title] = SB_SECRET_TEXT[kind];
+    add(id, 'secrets', 'critical', title, `Anyone can copy it and read or change all your data, past every rule. Rotate it in your Supabase dashboard (${SB_DASH(sb.ref, 'settings/api-keys')}), then have your AI builder move the code that needs it to the server (the prompt is below the list). Removing it from the code does not undo the exposure.`);
+  }
+  add('sb_advisor', 'data', 'medium', 'This app uses Supabase: make sure no table is readable by anyone.', `If a table has no row rules, anyone with your public key can read it. Open the Security Advisor in your own Supabase account (${SB_DASH(sb.ref, 'advisors/security')}) and follow the steps below the list. ${SB_NEVER_READS}`);
+  info.supabase = { found: true, project: sb.ref, secrets: sb.secrets, guide: supabaseGuide(host, sb) };
+}
+
+// Firebase: also passive. The web config is public by design; the protection is in the Security
+// Rules, which the owner checks in their own Firebase console. No request goes to the project.
+function firebaseCheck(text, add, info) {
   const apiKey = (text.match(/apiKey["']?\s*:\s*["'](AIza[0-9A-Za-z_-]{30,})["']/) || [])[1];
   const dbUrl = (text.match(/["'](https:\/\/[a-z0-9-]+(?:-default-rtdb)?\.(?:firebaseio\.com|[a-z0-9-]+\.firebasedatabase\.app))["']/) || [])[1];
   const bucket = (text.match(/storageBucket["']?\s*:\s*["']([a-z0-9.-]+\.(?:appspot\.com|firebasestorage\.app))["']/) || [])[1];
@@ -772,15 +806,7 @@ async function firebaseCheck(net, text, add, info) {
   if (!apiKey && !dbUrl && !bucket && !projectId) return;
   info.firebase = true;
   if (apiKey) add('firebase_config', 'secrets', 'info', 'The Firebase web config is in the browser code, as intended.', 'Firebase web keys are public by design; the protection is in the Security Rules. Restrict the key to your domains in Google Cloud.');
-  if (dbUrl) {
-    const r = await net.json(`${dbUrl}/.json?shallow=true`);
-    const keys = r.json && typeof r.json === 'object' && !Array.isArray(r.json) ? Object.keys(r.json).length : 0;
-    if (keys > 0) add('fb_rtdb', 'data', 'critical', `The Realtime Database is readable by anyone (${plural(keys, 'top-level key')}).`, 'Set database rules so reads require sign-in and are scoped to the signed-in user.');
-  }
-  if (bucket) {
-    const r = await net.json(`https://firebasestorage.googleapis.com/v0/b/${bucket}/o?maxResults=1`);
-    if (Array.isArray(r.json?.items) && r.json.items.length > 0) add('fb_storage', 'data', 'high', 'Anyone can list the files in the storage bucket.', 'Set Storage rules so listing and reading require sign-in; keep public files in a separate bucket.');
-  }
+  if (dbUrl || bucket) add('fb_rules', 'data', 'medium', 'This app uses Firebase: make sure its database and storage are not readable by anyone.', `In your own Firebase console, open the Rules of Realtime Database or Firestore, and of Storage. Reads and writes should require sign-in and reach only the signed-in user's own data; the Rules Playground there tests each rule. ${SB_NEVER_READS}`);
 }
 
 // ------------------------------------------------------------------ 6. scoring and the report
@@ -894,8 +920,11 @@ export async function runCheck(rawUrl, { owner = false, maps = true, deps = {} }
       const files = await clientText(net, home, page);
       secretScan(files, add);
       const all = files.map((f) => f.text).join('\n');
-      await Promise.all([supabaseCheck(net, all, add, info), firebaseCheck(net, all, add, info)]);
-      checked.data = { ran: true, note: [info.supabase ? `Supabase: ${info.supabase.tables_checked} tables checked` : '', info.firebase ? 'Firebase found' : ''].filter(Boolean).join('; ') || 'exposed files checked; no Supabase or Firebase found' };
+      supabaseCheck(ctx.host, all, add, info);
+      firebaseCheck(all, add, info);
+      if (info.supabase && !stack.includes('supabase')) stack.push('supabase');
+      if (info.firebase && !stack.includes('firebase')) stack.push('firebase');
+      checked.data = { ran: true, note: [info.supabase ? 'Supabase found: Security Advisor steps below; this check never reads your data' : '', info.firebase ? 'Firebase found: check its Security Rules' : ''].filter(Boolean).join('; ') || 'exposed files checked; no Supabase or Firebase found' };
       checked.secrets = { ran: true };
     }
   }
@@ -924,8 +953,7 @@ export async function runCheck(rawUrl, { owner = false, maps = true, deps = {} }
       ownership,
       token: localToken(ctx.host),
       email_domain: mailDomain || null,
-      tables: info.tables || [],
-      buckets: info.buckets || [],
+      supabase: info.supabase || null,
       mcp: info.mcp || [],
       requests: Object.fromEntries(net.hosts),
     };
@@ -953,8 +981,6 @@ export function reportLink(report) {
     m: report.metrics,
     st: report.stack,
     e: report.email_domain,
-    tb: report.tables,
-    bk: report.buckets,
     mc: (report.mcp || []).map((s) => [s.url, s.on_7maps === true ? 1 : s.on_7maps === false ? 0 : -1]),
   };
   const pack = () => deflateRawSync(Buffer.from(JSON.stringify(p)), { level: 9 }).toString('base64url');
@@ -996,6 +1022,18 @@ export function textReport(report, { link = true } = {}) {
   if (!now.length && !later.length) lines.push('', 'Nothing to fix was found in these checks.');
   if (report.ownership !== 'not_requested' && report.ownership !== 'token_missing') {
     lines.push('', `Deep checks ran (ownership token found as a ${report.ownership.replace('verified_', '')}).`);
+    const g = report.supabase?.guide;
+    if (g) {
+      lines.push('', `Supabase: ${g.never_reads} It read only the code your app already sends to every visitor; no request went to your Supabase project.`);
+      if (g.secret_steps) {
+        lines.push('A Supabase secret is in that code. Fix it first:');
+        g.secret_steps.forEach((s, n) => lines.push(`  ${n + 1}. ${s}`));
+        lines.push('  Secret key prompt for your AI builder:', `  "${g.secret_prompt}"`);
+      }
+      lines.push(`${g.title}. ${g.means}`);
+      g.steps.forEach((s, n) => lines.push(`  ${n + 1}. ${s}`));
+      lines.push('  Prompt for your AI builder:', `  "${g.ai_prompt}"`);
+    }
   } else {
     lines.push('', report.ownership === 'token_missing'
       ? 'Deep checks did not run: the ownership token is not on the app yet.'
@@ -1028,9 +1066,10 @@ const HELP = `7IT Guard ${VERSION}: check a deployed web app from the outside, o
   node check.mjs <address> [--owner] [--json] [--no-link] [--no-7maps]
   node check.mjs <address> --token
 
-  --owner     the person running this owns the app: also check exposed files, keys in the
-              browser code and the Supabase or Firebase backend (needs the ownership token
-              on the app; --token prints it)
+  --owner     the person running this owns the app: also check exposed files and keys in the
+              browser code, and name the Supabase or Firebase backend that code uses, with the
+              steps to check its rules in your own account (needs the ownership token on the
+              app; --token prints it). This check never reads your data.
   --json      machine-readable output
   --no-link   leave out the full report link
   --no-7maps  when the app publishes an MCP server, do not download the 7Maps list that

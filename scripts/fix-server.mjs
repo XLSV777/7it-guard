@@ -12,7 +12,7 @@
 
 import { createInterface } from 'node:readline';
 
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 const ENDPOINT = process.env.GUARD_PLAYBOOK_URL || 'https://7it.co.il/guard/playbook';
 const REVIEW_URL = 'https://7it.co.il/services/ai-built-apps/';
 const KNOWN_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
@@ -24,7 +24,7 @@ const TOOL = {
   inputSchema: {
     type: 'object',
     properties: {
-      finding_ids: { type: 'array', items: { type: 'string', pattern: '^[a-z0-9_]{2,40}$' }, minItems: 1, maxItems: 60, description: 'The ids from the 7IT Guard report (the "id" of each finding in --json output), for example ["csp_missing","sb_table","no_dmarc"]' },
+      finding_ids: { type: 'array', items: { type: 'string', pattern: '^[a-z0-9_]{2,40}$' }, minItems: 1, maxItems: 60, description: 'The ids from the 7IT Guard report (the "id" of each finding in --json output), for example ["csp_missing","sb_advisor","no_dmarc"]' },
       stack: { type: 'array', items: { type: 'string', pattern: '^[a-z0-9-]{2,30}$' }, maxItems: 10, description: 'The "stack" list from the report, for example ["vercel","nextjs","supabase"]' },
     },
     required: ['finding_ids'],
@@ -34,7 +34,7 @@ const TOOL = {
 
 const NO_KEY = [
   'No 7IT key is set, so no request was made.',
-  'Every item in the 7IT Guard report already carries its fix, and the full report page has a copyable snippet for each one (header configs for Vercel, Netlify, Next.js and nginx, SPF and DMARC records, Supabase row level security policies). Fix them from there, one at a time, then run the check again.',
+  'Every item in the 7IT Guard report already carries its fix, and the full report page has a copyable snippet for each one (header configs for Vercel, Netlify, Next.js and nginx, SPF and DMARC records). Fix them from there, one at a time, then run the check again.',
   `For the parts no outside check can see (load, scale, architecture, the logic behind the login), a senior review: ${REVIEW_URL}`,
 ].join('\n\n');
 
