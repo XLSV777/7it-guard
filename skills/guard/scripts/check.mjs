@@ -611,6 +611,19 @@ async function ownershipToken(net, origin, html) {
   return file.ok && TOKEN_RE.test(file.text) ? 'file' : null;
 }
 
+// A MetaMCP session list (CVE-2026-79537): JSON that names live sessions, by session id or
+// with the namespaces they are connected to. A health answer without sessions, an HTML page
+// or an empty list is not a match. Only this one path is read; /mcp-proxy/ is never touched.
+export function mcpSessionsShape(b) {
+  const t = String(b || '').trim();
+  if (!/^[[{]/.test(t)) return false;
+  if (!/"(?:sessions?|session_?ids?|active_?sessions)"\s*:/i.test(t)) return false;
+  return /"namespace(?:s|_?ids?|_?uuids?|_?names?)?"\s*:/i.test(t)
+    || /"session_?id"\s*:\s*"[^"\s]{8,}"/i.test(t)
+    || /"(?:sessions?|session_?ids?|active_?sessions)"\s*:\s*\[\s*"[^"\s]{8,}"/i.test(t)
+    || /"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"/i.test(t);
+}
+
 // Well-known files that should never be public. Each matches only on the SHAPE of the
 // sensitive file (an env file has NAME=value lines), reads at most 4 KB, keeps nothing,
 // and reports the path only.
@@ -631,6 +644,7 @@ const PROBES = [
   ['/server-status', 'server_status', 'medium', (b) => /Apache Server Status/i.test(b)],
   ['/adminer.php', 'db_admin', 'high', (b) => /adminer/i.test(b) && /password/i.test(b)],
   ['/phpmyadmin/', 'db_admin', 'high', (b) => /phpMyAdmin/.test(b)],
+  ['/metamcp/health/sessions', 'mcp_sessions', 'critical', mcpSessionsShape],
 ];
 const PROBE_TEXT = {
   env: ['An environment file is public', 'Stop serving it (keep secrets in the host\'s environment settings, never in the web root) and rotate every key it contained.'],
@@ -640,6 +654,7 @@ const PROBE_TEXT = {
   phpinfo: ['A phpinfo page shows the server\'s configuration', 'Delete the page.'],
   server_status: ['The Apache status page is public', 'Restrict /server-status to localhost.'],
   db_admin: ['A database admin tool is public', 'Remove it or put it behind a VPN or IP allowlist.'],
+  mcp_sessions: ['Anyone can see the live sessions of your MCP gateway (MetaMCP)', 'Block /mcp-proxy/ and this address at your reverse proxy, turn off open sign-up, keep the gateway off the public internet (VPN or private network only), and rotate every key and password it holds.'],
 };
 async function exposedFiles(net, origin, homeHtml, add) {
   const homeStart = homeHtml.slice(0, 300);

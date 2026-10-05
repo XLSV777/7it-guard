@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { inflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { runCheck, textReport, reportLink, normalizeTarget, localToken, mailDomainOf, gradeOf, mapsKey, mapsHash } from '../skills/guard/scripts/check.mjs';
+import { runCheck, textReport, reportLink, normalizeTarget, localToken, mailDomainOf, gradeOf, mapsKey, mapsHash, mcpSessionsShape } from '../skills/guard/scripts/check.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -184,6 +184,43 @@ test('owner with the token: exposed files, secrets and Supabase, names and count
       for (const secret of [FAKE_OPENAI, ANON, 'postgres://secret', 'x.png']) assert.ok(!out.includes(secret), `leaked ${secret.slice(0, 12)}`);
     }
   } finally { await m.close(); }
+});
+
+test('owner with the token: a public MetaMCP session list is critical; a single-page app or a 404 is not', async () => {
+  assert.equal(mcpSessionsShape('{"sessions":[{"sessionId":"3f1c9a2e-7b44-4c1d-9e0a-5d2f8b6c1a90","namespaceUuid":"ns-1"}]}'), true);
+  assert.equal(mcpSessionsShape('{"count":1,"sessions":["a1b2c3d4e5f6a7b8"]}'), true);
+  for (const no of ['{"status":"ok","service":"metamcp"}', '{"sessions":[]}', '<!doctype html><html><body>sessions</body></html>', 'not found', ''])
+    assert.equal(mcpSessionsShape(no), false, no);
+  const SESS = '{"sessions":[{"sessionId":"3f1c9a2e-7b44-4c1d-9e0a-5d2f8b6c1a90","namespace":"team-a"}]}';
+  // Exposed: the list answers with a session list (the server ignores Range and sends 200).
+  const routes = { ...weakRoutes({ token: true }), [`${WEAK}/metamcp/health/sessions`]: send(200, { 'content-type': 'application/json' }, SESS) };
+  let m = await mockServer(routes);
+  try {
+    const r = await runCheck(WEAK, { owner: true, deps: { fetchImpl: m.fetchImpl, dns: weakDns, tls: tlsOk, env: {} } });
+    const f = r.findings.find((x) => x.id === 'exposed_mcp_sessions');
+    assert.ok(f, `expected exposed_mcp_sessions; got ${ids(r).join(',')}`);
+    assert.equal(f.sev, 'critical');
+    assert.equal(f.cat, 'data');
+    assert.match(f.fix, /\/mcp-proxy\//);
+    const calls = m.log.filter((l) => l.path === '/metamcp/health/sessions');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].method, 'GET');
+    assert.equal(calls[0].headers.range, 'bytes=0-4095');
+    assert.ok(!m.log.some((l) => l.path.startsWith('/mcp-proxy')), 'never touches /mcp-proxy/');
+    for (const out of [JSON.stringify(r), textReport(r)]) assert.ok(!out.includes('3f1c9a2e') && !out.includes('team-a'), 'no session id or namespace in the output');
+  } finally { await m.close(); }
+  // Not exposed: a single-page app answering every path with its home page (weakRoutes), a 404, and a redirect.
+  for (const variant of ['spa', '404', 'redirect']) {
+    const rt = { ...weakRoutes({ token: true }) };
+    if (variant === '404') rt[`${WEAK}/metamcp/health/sessions`] = send(404, { 'content-type': 'application/json' }, '{"error":"not found"}');
+    if (variant === 'redirect') { rt[`${WEAK}/metamcp/health/sessions`] = send(302, { location: `https://${WEAK}/s.json` }); rt[`${WEAK}/s.json`] = send(200, { 'content-type': 'application/json' }, SESS); }
+    m = await mockServer(rt);
+    try {
+      const r = await runCheck(WEAK, { owner: true, deps: { fetchImpl: m.fetchImpl, dns: weakDns, tls: tlsOk, env: {} } });
+      assert.ok(!ids(r).includes('exposed_mcp_sessions'), `${variant}: not a finding`);
+      if (variant === 'redirect') assert.ok(!m.log.some((l) => l.path === '/s.json'), 'redirects are not followed');
+    } finally { await m.close(); }
+  }
 });
 
 test('strong app: grade A, nothing to fix', async () => {
