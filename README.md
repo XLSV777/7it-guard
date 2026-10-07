@@ -69,7 +69,7 @@ node skills/guard/scripts/check.mjs myapp.com --no-7maps   # skip the 7Maps look
 You can run the script yourself too. A sample terminal report:
 
 ```
-7IT Guard 0.3.1 · app.example.com · 2026-10-04 · run on this machine, nothing about the app sent to 7IT
+7IT Guard 0.3.2 · app.example.com · 2026-10-04 · run on this machine, nothing about the app sent to 7IT
 Grade D (64/100) · 1 to fix before shipping · 6 to fix soon
 
   Security        74  ███████░░░  4 issues

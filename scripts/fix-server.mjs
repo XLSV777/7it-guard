@@ -12,7 +12,7 @@
 
 import { createInterface } from 'node:readline';
 
-const VERSION = '0.3.1';
+const VERSION = '0.3.2';
 const ENDPOINT = process.env.GUARD_PLAYBOOK_URL || 'https://7it.co.il/guard/playbook';
 const REVIEW_URL = 'https://7it.co.il/services/ai-built-apps/';
 const KNOWN_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];

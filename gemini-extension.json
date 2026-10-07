@@ -1,5 +1,5 @@
 {
   "name": "7it-guard",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Checks a deployed web app from the outside before it ships, on your own machine: HTTPS and security headers, a public source map, email authentication, speed, accessibility, SEO and reliability, plus exposed files and keys in the browser code once you confirm the app is yours, with guided steps to check Supabase or Firebase rules in your own account (it never reads your data). One graded, prioritized report. Needs Node.js 18 or newer."
 }

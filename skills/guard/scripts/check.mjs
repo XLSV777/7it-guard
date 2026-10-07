@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 7IT Guard 0.3.1: checks a deployed web app from the outside, on YOUR machine.
+// 7IT Guard 0.3.2: checks a deployed web app from the outside, on YOUR machine.
 //
 //   node check.mjs <address> [--owner] [--json] [--no-link] [--no-7maps] [--token]
 //
@@ -32,7 +32,7 @@ import { pathToFileURL } from 'node:url';
 
 // ------------------------------------------------------------------ 1. settings and helpers
 
-export const VERSION = '0.3.1';
+export const VERSION = '0.3.2';
 const UA = `Mozilla/5.0 (compatible; 7ITGuard/${VERSION}; +https://7it.co.il/tools/guard/)`;
 export const REPORT_BASE = 'https://7it.co.il/tools/guard/report/';
 export const REVIEW_URL = 'https://7it.co.il/services/ai-built-apps/';
@@ -754,7 +754,7 @@ const SB_SECRET_TEXT = {
 };
 // The AI builder prompts: the same text as the site's self-help entries supabase_rls and
 // supabase_secret_key (7IT-LANDING data/guard-selfhelp/catalog.json), with the app's address filled in.
-export const SB_RLS_PROMPT = 'My app {site} uses Supabase. Turn on Row Level Security for every table in the public schema. For each table, add policies so a signed-in user can select, insert, update and delete only their own rows (compare auth.uid() with the owner column, usually user_id). A table that is meant to be public gets a select-only policy and no write access. Never use the service role key or any secret key in browser code. Then fix each warning the Supabase Security Advisor lists. Write the changes as a migration and show me the SQL before you apply it. Do not delete any data. Do not change anything unrelated. When you are done, tell me in plain words what you changed.';
+export const SB_RLS_PROMPT = 'My app {site} uses Supabase. Turn on Row Level Security for every table in the public schema. For each table, add policies so a signed-in user can select, insert, update and delete only their own rows (compare auth.uid() with the owner column, usually user_id). A table that is meant to be public gets a select-only policy and no write access. Then check the table grants: the anon and authenticated roles keep only the privileges the app uses on each table, and none on a table the browser never needs. A table the app does use from the browser needs an explicit grant, because newer Supabase projects no longer grant new tables automatically (without one, its requests fail with error 42501, permission denied). Never use the service role key or any secret key in browser code. Then fix each warning the Supabase Security Advisor lists. Write the changes as a migration and show me the SQL before you apply it. Do not delete any data. Do not change anything unrelated. When you are done, tell me in plain words what you changed.';
 export const SB_SECRET_PROMPT = 'A Supabase secret (the service role key, an sb_secret_ key or the database password) is in the code that {site} sends to browsers. Remove it from every file sent to the browser. Move any code that needs it to a server function or a Supabase Edge Function that reads it from a server-side environment variable. The browser keeps only the publishable or anon key. I will create the new key myself; use it only on the server. Do not delete any data. Do not change anything unrelated. When you are done, tell me in plain words what you changed.';
 export const SB_NEVER_READS = 'This check never reads your data.';
 
@@ -764,11 +764,12 @@ export function supabaseGuide(host, sb) {
   const guide = {
     never_reads: SB_NEVER_READS,
     title: 'Make sure your Supabase data is not readable by anyone',
-    means: 'If a table has no row rules, anyone with your public key can read it.',
+    means: 'A table with no row rules can be read and changed by anyone with your public key, when the public roles (anon and authenticated) have a grant on it. Older Supabase projects gave every new table that grant automatically.',
+    availability: 'Since 30 May 2026 on new Supabase projects, and from 30 October 2026 on every project, a new table gets no automatic grant for the Data API. A new table the app uses from the browser then needs an explicit grant, or its requests fail with error 42501 (permission denied). Tables that already exist keep their grants.',
     advisor_url: advisor,
     steps: [
       `Open your Supabase project, then Advisors, then Security Advisor (${advisor}). If it lists no security warnings, you are done.`,
-      'Copy the prompt below into your AI builder. It turns on Row Level Security and owner-only rules.',
+      'Copy the prompt below into your AI builder. It turns on Row Level Security and owner-only rules, and keeps the table grants to what the app uses.',
       'Run the Security Advisor again. Check that each warning is gone.',
       'If warnings are still listed, paste them into your AI builder, under the same prompt.',
     ],
@@ -792,7 +793,7 @@ function supabaseCheck(host, text, add, info) {
     const [id, title] = SB_SECRET_TEXT[kind];
     add(id, 'secrets', 'critical', title, `Anyone can copy it and read or change all your data, past every rule. Rotate it in your Supabase dashboard (${SB_DASH(sb.ref, 'settings/api-keys')}), then have your AI builder move the code that needs it to the server (the prompt is below the list). Removing it from the code does not undo the exposure.`);
   }
-  add('sb_advisor', 'data', 'medium', 'This app uses Supabase: make sure no table is readable by anyone.', `If a table has no row rules, anyone with your public key can read it. Open the Security Advisor in your own Supabase account (${SB_DASH(sb.ref, 'advisors/security')}) and follow the steps below the list. ${SB_NEVER_READS}`);
+  add('sb_advisor', 'data', 'medium', 'This app uses Supabase: make sure no table is readable by anyone.', `A table with no row rules can be read and changed by anyone with your public key, when the public roles (anon and authenticated) have a grant on it. Older Supabase projects gave every new table that grant automatically. Open the Security Advisor in your own Supabase account (${SB_DASH(sb.ref, 'advisors/security')}) and follow the steps below the list. ${SB_NEVER_READS}`);
   info.supabase = { found: true, project: sb.ref, secrets: sb.secrets, guide: supabaseGuide(host, sb) };
 }
 
@@ -1033,6 +1034,7 @@ export function textReport(report, { link = true } = {}) {
       lines.push(`${g.title}. ${g.means}`);
       g.steps.forEach((s, n) => lines.push(`  ${n + 1}. ${s}`));
       lines.push('  Prompt for your AI builder:', `  "${g.ai_prompt}"`);
+      if (g.availability) lines.push(`  Note: ${g.availability}`);
     }
   } else {
     lines.push('', report.ownership === 'token_missing'
