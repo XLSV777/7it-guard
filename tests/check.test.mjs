@@ -186,7 +186,7 @@ test('owner with the token: exposed files, secrets, and Supabase passively (neve
     // 0.3.2: Supabase's grants change (a table without RLS is open only to a role with a grant; new tables get no
     // automatic grant from 2026-10-30, a missing one answers 42501).
     assert.ok(t.includes('Then check the table grants: the anon and authenticated roles keep only the privileges the app uses'));
-    assert.ok(t.includes('when the public roles (anon and authenticated) have a grant on it') && t.includes('Note: Since 30 May 2026') && t.includes('42501'));
+    assert.ok(t.includes('anyone with your public key can read and change a table the public roles hold a grant for') && t.includes('Note: Since 30 May 2026') && t.includes('42501'));
     assert.ok(r.supabase.guide.availability.includes('Tables that already exist keep their grants.'));
     assert.match(r.categories.data.note, /never reads your data/);
     // No key value or file content anywhere in the output, the text or the link.

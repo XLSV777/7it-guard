@@ -764,7 +764,7 @@ export function supabaseGuide(host, sb) {
   const guide = {
     never_reads: SB_NEVER_READS,
     title: 'Make sure your Supabase data is not readable by anyone',
-    means: 'A table with no row rules can be read and changed by anyone with your public key, when the public roles (anon and authenticated) have a grant on it. Older Supabase projects gave every new table that grant automatically.',
+    means: 'Without row rules, anyone with your public key can read and change a table the public roles hold a grant for.',
     availability: 'Since 30 May 2026 on new Supabase projects, and from 30 October 2026 on every project, a new table gets no automatic grant for the Data API. A new table the app uses from the browser then needs an explicit grant, or its requests fail with error 42501 (permission denied). Tables that already exist keep their grants.',
     advisor_url: advisor,
     steps: [
@@ -793,7 +793,7 @@ function supabaseCheck(host, text, add, info) {
     const [id, title] = SB_SECRET_TEXT[kind];
     add(id, 'secrets', 'critical', title, `Anyone can copy it and read or change all your data, past every rule. Rotate it in your Supabase dashboard (${SB_DASH(sb.ref, 'settings/api-keys')}), then have your AI builder move the code that needs it to the server (the prompt is below the list). Removing it from the code does not undo the exposure.`);
   }
-  add('sb_advisor', 'data', 'medium', 'This app uses Supabase: make sure no table is readable by anyone.', `A table with no row rules can be read and changed by anyone with your public key, when the public roles (anon and authenticated) have a grant on it. Older Supabase projects gave every new table that grant automatically. Open the Security Advisor in your own Supabase account (${SB_DASH(sb.ref, 'advisors/security')}) and follow the steps below the list. ${SB_NEVER_READS}`);
+  add('sb_advisor', 'data', 'medium', 'This app uses Supabase: make sure no table is readable by anyone.', `Without row rules, anyone with your public key can read and change a table the public roles hold a grant for. Open the Security Advisor in your own Supabase account (${SB_DASH(sb.ref, 'advisors/security')}) and follow the steps below the list. ${SB_NEVER_READS}`);
   info.supabase = { found: true, project: sb.ref, secrets: sb.secrets, guide: supabaseGuide(host, sb) };
 }
 
