@@ -91,6 +91,8 @@ Not checked from outside: load and traffic spikes, scale limits, architecture, b
 
 **Fixing:** `/7it-guard:fix` walks through the findings in your repository, most severe first, asking before every change, then checks again. Changes outside the code (rotating a key, database policies, DNS records) are given to you as exact steps to run yourself.
 
+**Backup vault (with a 7IT key whose plan or Vault add-on includes it):** `/7it-guard:vault` sets up a nightly encrypted copy of your database and your stored files into storage you own, plus a weekly restore test, all running in your own GitHub account. It finds what it can in the project (the platform, the database variable, Supabase Storage or an S3 or R2 bucket, the default branch, your time zone) and asks only what it cannot know, such as where the backups should live (a new Cloudflare R2 bucket by default). It writes two complete workflow files (`.github/workflows/7it-vault.yml` and `7it-vault-restore.yml`, every step visible, tools pinned and checked), makes your backup key on your machine and tells you where it is so you can keep it in your password manager, sets the GitHub secrets with `gh secret set`, offers a database sign-in that can only read (shown before it runs, only with your yes), and starts the first backup and restore test. Running it again keeps your keys and updates the files. It needs the GitHub CLI (`gh`). On Lovable Cloud or Bolt Database it writes nothing: those platforms give no database address, so a nightly copy cannot run there. It says so plainly (manual, not automatic) and explains the two paths: move to your own Supabase project (after that the vault works as above), and until then press the platform's own export button once a month, with a monthly reminder in the 7IT Guard app if you want one.
+
 **Optional, Google PageSpeed:** set `PAGESPEED_API_KEY` to your own Google API key in the shell Claude Code runs in. The script then asks Google PageSpeed for the phone performance and accessibility scores (that request goes from your machine to Google and includes the app's address).
 
 ## What it sends, and what it never sends
@@ -101,6 +103,8 @@ Not checked from outside: load and traffic spikes, scale limits, architecture, b
 - **The report link** carries the results in the URL fragment, which browsers do not send to servers. Opening it loads a static page from 7it.co.il; Google Analytics on that page records the page address without the fragment.
 - **The 7IT key**, if you set one, is kept in your system's secure storage by Claude Code and handed only to the plugin's small local fix server ([`scripts/fix-server.mjs`](scripts/fix-server.mjs)). It makes no request on its own. When `/7it-guard:fix` asks it for the strict playbook, it makes ONE request to `https://7it.co.il/guard/playbook` with the key, the ids of the findings (for example `csp_missing,no_dmarc`) and the detected platform names (for example `vercel,supabase`). Never the app's address, the report, your code or the conversation. Without a key it makes no request at all. 7IT keeps a usage count per key and a usage record (no report, no address).
 - **What a deep check reads**: the response to well-known file paths (first 4 KB, matched on shape, reported as a path, never the content); the app's own scripts (in memory only, to look for key shapes; a key is reported by type and file, never its value); the Supabase project or Firebase config named in that same code (the project address is public; it is used only for the links to your own dashboard). Nothing inside the database: no table names, no counts, no rows, no settings, no file listings. Nothing is written anywhere and nothing is kept.
+
+- **The backup vault** (`/7it-guard:vault`): your data never comes to 7IT. The copy is made, encrypted with your own key and stored in your own storage by the workflow in your own GitHub account. The setup reads the project's env files on your machine and passes secrets straight to `gh secret set`; it never prints them. With your 7IT key, the local fix server makes the registration request to `https://7it.co.il/guard/app/api/vault_setup` with the key, the site's address, the repository's name and numeric id, the branch, the schedule, the time zone and whether stored files are copied (for the monthly export reminder on Lovable Cloud or Bolt Database: only the site's address and the platform's name). Never a database address, a password, a storage key or any private key. After that, each run sends 7IT a short receipt from your workflow (times, sizes, checksums, counts, which dates can be restored, ok or not), proven by GitHub's own identity token for that run.
 
 Privacy policy: https://7it.co.il/privacy/#guard
 
@@ -128,6 +132,8 @@ Every network call in the tests goes to a local mock server; DNS and TLS are stu
 ```
 
 If you added an ownership token to your app, remove the meta tag or the `/7it-verify.txt` file; nothing else is left behind.
+
+If you set up the backup vault, it lives in your repository and keeps running after the plugin is gone. To stop it, delete `.github/workflows/7it-vault.yml` and `7it-vault-restore.yml` and the `VAULT_` secrets of the repository; your backups stay in your storage.
 
 If you installed it from the 7Maps marketplace, use `/plugin uninstall 7it-guard@7maps` instead (the 7Maps plugin stays).
 

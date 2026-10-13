@@ -420,8 +420,9 @@ test('fix server: no key means no request; with a key it sends only key, ids and
     const init = await a.call('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } });
     assert.equal(init.result.protocolVersion, '2025-06-18');
     const list = await a.call('tools/list', {});
-    assert.deepEqual(list.result.tools.map((t) => t.name), ['get_fix_playbook']);
+    assert.deepEqual(list.result.tools.map((t) => t.name), ['get_fix_playbook', 'vault_register']);
     assert.equal(list.result.tools[0].annotations.readOnlyHint, true);
+    assert.equal(list.result.tools[1].annotations.readOnlyHint, false);
     const none = await a.call('tools/call', { name: 'get_fix_playbook', arguments: { finding_ids: ['csp_missing'] } });
     assert.match(none.result.content[0].text, /No 7IT key is set, so no request was made/);
     assert.ok(!/\$\d|price|\bfree\b/i.test(none.result.content[0].text));
@@ -436,5 +437,39 @@ test('fix server: no key means no request; with a key it sends only key, ids and
     assert.equal(seen.length, 1);
     assert.equal(seen[0].auth, 'Bearer test-key-123');
     assert.equal(decodeURIComponent(seen[0].url), '/guard/playbook?f=csp_missing,no_dmarc&s=vercel');
+  } finally { await new Promise((r) => server.close(r)); }
+});
+
+test('fix server, vault_register (0.4.0): no key means no request; with a key it sends only the allowlisted fields', async () => {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let b = '';
+    req.on('data', (d) => { b += d; });
+    req.on('end', () => {
+      seen.push({ method: req.method, auth: req.headers.authorization, body: JSON.parse(b || '{}') });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, dry: true }));
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${server.address().port}/guard/app/api/vault_setup`;
+  try {
+    const a = rpc({ GUARD_FIX_KEY: '', GUARD_VAULT_URL: url });
+    await a.call('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } });
+    const none = await a.call('tools/call', { name: 'vault_register', arguments: { site: 'myapp.com', dry: true } });
+    assert.equal(none.result.isError, true);
+    assert.match(none.result.content[0].text, /No 7IT key is set, so nothing was sent/);
+    a.close();
+    assert.equal(seen.length, 0);
+
+    const b = rpc({ GUARD_FIX_KEY: 'test-key-123', GUARD_VAULT_URL: url });
+    await b.call('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } });
+    const got = await b.call('tools/call', { name: 'vault_register', arguments: { site: 'myapp.com', dry: true, database_url: 'postgres://u:secret@h/db', password: 'x' } });
+    assert.notEqual(got.result.isError, true);
+    b.close();
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].method, 'POST');
+    assert.equal(seen[0].auth, 'Bearer test-key-123');
+    assert.deepEqual(seen[0].body, { site: 'myapp.com', dry: true });
   } finally { await new Promise((r) => server.close(r)); }
 });
