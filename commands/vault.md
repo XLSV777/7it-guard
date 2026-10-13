@@ -1,5 +1,5 @@
 ---
-description: Set up the 7IT Guard backup vault for this app: a nightly encrypted copy of the database and stored files into storage the owner owns, a weekly restore test, all in the owner's own GitHub account.
+description: "Set up the 7IT Guard backup vault for this app: a nightly encrypted copy of the database and stored files into storage the owner owns, a weekly restore test, all in the owner's own GitHub account."
 argument-hint: <the app's address, if this project does not name it>
 disable-model-invocation: true
 ---
