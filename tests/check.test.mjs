@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { inflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { APP_LINE, runCheck, textReport, reportLink,normalizeTarget, localToken, mailDomainOf, gradeOf, mapsKey, mapsHash, mcpSessionsShape, supabaseIn, readHtml, stackOf, privateAddress, publicName, clean, makeNet } from '../skills/guard/scripts/check.mjs';
+import { VERSION, APP_LINE, runCheck, textReport, reportLink,normalizeTarget, localToken, mailDomainOf, gradeOf, mapsKey, mapsHash, mcpSessionsShape, supabaseIn, readHtml, stackOf, privateAddress, publicName, clean, makeNet } from '../skills/guard/scripts/check.mjs';
 import { psqlArgs } from '../scripts/vault/setup.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -389,6 +389,9 @@ test('app with an MCP server: says whether it is on 7Maps without sending its ad
       assert.ok(!/\bfree\b|\$\d|price|discount|offer/i.test(t), 'no prices or offers');
       const p = JSON.parse(inflateRawSync(Buffer.from(reportLink(r).split('#r=')[1], 'base64url')).toString());
       assert.deepEqual(p.mc, [[`https://${MCPAPP}/mcp`, listed ? 1 : 0]]);
+      assert.equal(p.v, 1, 'payload stays v1');
+      assert.equal(p.pv, VERSION, 'the plugin version travels in the link (pv)');
+      assert.match(p.pv, /^\d+\.\d+\.\d+$/);
     } finally { await m.close(); }
   }
   const m = await mockServer(mcpRoutes({ listed: true }));

@@ -12,6 +12,8 @@ Security fixes.
 - `/7it-guard:fix`: the playbook from the fix server is framed as reference data. Each step is proposed and made only after the person approves it.
 - An early stop of the check (no HTTPS, or a refused redirect) no longer ends in an error.
 - The check script reports 0.4.2.
+- The report link carries the plugin version (`pv`, still payload v1), so the full report page can say when a newer 7IT Guard is out and how to update.
+- README: how to turn on auto-update for the marketplace (`/plugin`, Marketplaces, Enable auto-update) and the manual update commands. Plugins added from GitHub do not update by themselves until you do.
 
 ## 0.4.1 (2026-10-26)
 

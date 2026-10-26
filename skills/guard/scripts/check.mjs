@@ -1101,6 +1101,9 @@ const CAT_LABEL = Object.fromEntries(CATEGORIES);
 
 // The report link: results packed into the address fragment (#r=...), which browsers never
 // send to a server. deflate-raw + base64url; kept under LINK_MAX characters by trimming.
+// Payload v1 (keep in step with the page's note in 7IT-LANDING scripts/build-guard-report.mjs):
+//   { v:1, h, t, g, s, o, c, f, m, st, e, mc, x, pv:'x.y.z' this plugin's version (0.4.2+) }.
+// pv lets the page say when a newer 7IT Guard is out; older pages ignore it, so v stays 1.
 export function reportLink(report) {
   const short = { critical: 'c', high: 'h', medium: 'm', low: 'l', info: 'i' };
   const p = {
@@ -1116,6 +1119,7 @@ export function reportLink(report) {
     st: report.stack,
     e: report.email_domain,
     mc: (report.mcp || []).map((s) => [s.url, s.on_7maps === true ? 1 : s.on_7maps === false ? 0 : -1]),
+    pv: VERSION,
   };
   const pack = () => deflateRawSync(Buffer.from(JSON.stringify(p)), { level: 9 }).toString('base64url');
   let enc = pack();
