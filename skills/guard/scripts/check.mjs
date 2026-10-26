@@ -43,6 +43,32 @@ export const APP_URL = 'https://7it.co.il/guard/app/?from=plugin';
 export const APP_LINE = `After launch: the 7IT Guard app checks this app from outside on a schedule and tells you when it stops answering: ${APP_URL}`;
 // 7Maps, the public map of MCP servers (also by 7IT). Used only when the app publishes an MCP server.
 export const MAPS_KNOWN = 'https://7it.co.il/7maps/known/';
+// Update notice. The 7Maps bucket this script already downloads (only when the app publishes an MCP server) names the
+// latest 7IT Guard version (plugin_latest, from 7IT's one list of plugin versions). When this script is older, the text
+// report ends with one line naming the update for the place it runs. No request is ever made just for this; without a
+// bucket the full report page says it instead (the link carries pv). Keep the texts equal to 7IT-LANDING
+// api/_plugin-versions.mjs (its tests compare them).
+export const CHANNEL_DEFAULT = 'skills';
+const UPDATE = {
+  claude: '/plugin marketplace update 7it-guard',
+  gemini: 'gemini extensions update 7it-guard',
+  skills: 'npx skills update',
+  codex: 'reinstall the 7IT Guard plugin from https://7it.co.il/tools/guard/',
+  chatgpt: 'reinstall the 7IT Guard plugin from https://7it.co.il/tools/guard/',
+};
+export const channelOf = (env = process.env) => (env.CLAUDE_PLUGIN_ROOT ? 'claude' : env.GEMINI_SESSION_ID || env.GEMINI_PROJECT_DIR || env.GEMINI_CLI ? 'gemini' : CHANNEL_DEFAULT);
+const SEMVER = /^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$/;
+export const parseVersion = (v) => { const m = typeof v === 'string' && v.length <= 20 ? SEMVER.exec(v) : null; return m ? [+m[1], +m[2], +m[3]] : null; };
+export function olderThan(a, b) {
+  const x = parseVersion(a), y = parseVersion(b);
+  if (!x || !y) return false;
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i];
+  return false;
+}
+export function updateNote(latest, channel = channelOf(), installed = VERSION) {
+  if (!olderThan(installed, latest)) return null;
+  return `7IT Guard plugin ${installed} is behind ${latest}; the person can update with: ${UPDATE[channel] || UPDATE.skills}`;
+}
 export const MAPS_PAGE = 'https://7it.co.il/7maps/s/';
 export const MAPS_CLAIM = 'https://7it.co.il/7maps/claim/';
 export const MAPS_SUBMIT = 'https://7it.co.il/7maps/submit/';
@@ -645,13 +671,15 @@ export const mapsHash = (key) => createHash('sha256').update(key, 'utf8').digest
 
 // Is each server on 7Maps? Downloads the public list for the first two characters of each hash
 // (about 1 KB; at most 3 downloads) and compares here. The address never leaves this machine.
-export async function mapsLookup(net, urls) {
+// meta.latest: the 7IT Guard version the bucket names, when it is a strict x.y.z.
+export async function mapsLookup(net, urls, meta = {}) {
   const out = urls.map((url) => ({ url, key: mapsKey(url), on_7maps: null }));
   const buckets = new Map();
   for (const s of out) { if (!s.key) continue; s.hash = mapsHash(s.key); const b = s.hash.slice(0, 2); if (!buckets.has(b)) buckets.set(b, null); }
   for (const b of [...buckets.keys()].slice(0, 3)) {
     const r = await net.json(`${MAPS_KNOWN}${b}.json?via=guard`, { headers: { Accept: 'application/json' }, max: 100_000 });
     if (r.json && Array.isArray(r.json.hashes)) buckets.set(b, new Set(r.json.hashes));
+    if (r.json && parseVersion(r.json.plugin_latest) && !meta.latest) meta.latest = r.json.plugin_latest;
   }
   for (const s of out) {
     const set = s.hash ? buckets.get(s.hash.slice(0, 2)) : null;
@@ -1030,7 +1058,9 @@ export async function runCheck(rawUrl, { owner = false, maps = true, deps = {} }
     (async () => {
       const urls = await mcpFind(net, origin, home.text);
       if (!urls.length) return;
-      info.mcp = maps ? await mapsLookup(net, urls) : urls.map((url) => ({ url, key: mapsKey(url), on_7maps: null, page: null }));
+      const meta = {};
+      info.mcp = maps ? await mapsLookup(net, urls, meta) : urls.map((url) => ({ url, key: mapsKey(url), on_7maps: null, page: null }));
+      info.latest = meta.latest || null;
     })(),
   ];
   const psiKey = env.PAGESPEED_API_KEY || '';
@@ -1089,6 +1119,7 @@ export async function runCheck(rawUrl, { owner = false, maps = true, deps = {} }
       email_domain: mailDomain || null,
       supabase: info.supabase || null,
       mcp: info.mcp || [],
+      latest_version: info.latest || null,
       requests: Object.fromEntries(net.hosts),
     };
   }
@@ -1196,6 +1227,8 @@ export function textReport(report, { link = true } = {}) {
   if (link) lines.push(`Full report: ${reportLink(report)}`);
   lines.push(APP_LINE);
   lines.push(`Not checked from outside: load and traffic spikes, scale limits, architecture, business logic behind the login, cost at scale, backups and recovery, compliance. A senior review covers these: ${REVIEW_URL}`);
+  const upd = updateNote(report.latest_version);
+  if (upd) lines.push(upd);
   return lines.join('\n');
 }
 

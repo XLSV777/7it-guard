@@ -13,6 +13,7 @@ Security fixes.
 - An early stop of the check (no HTTPS, or a refused redirect) no longer ends in an error.
 - The check script reports 0.4.2.
 - The report link carries the plugin version (`pv`, still payload v1), so the full report page can say when a newer 7IT Guard is out and how to update.
+- When the run already downloads a 7Maps list (the app publishes an MCP server), that list names the latest 7IT Guard version; if this one is older, the text report ends with one line naming the update for the place it runs (Claude Code, Gemini CLI, skills.sh, Codex). No request is made just for this. `--json` has `latest_version`. The skill and `/7it-guard:check` pass the line on once.
 - README: how to turn on auto-update for the marketplace (`/plugin`, Marketplaces, Enable auto-update) and the manual update commands. Plugins added from GitHub do not update by themselves until you do.
 
 ## 0.4.1 (2026-10-26)

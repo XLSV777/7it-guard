@@ -30,7 +30,7 @@ When the app publishes an MCP server (a server card at `/.well-known/mcp/server-
 /plugin install 7it-guard@7it-guard
 ```
 
-Turn on updates: in `/plugin`, open Marketplaces, choose `7it-guard`, Enable auto-update. Plugins added from GitHub do not update by themselves until you do. To update by hand: `/plugin marketplace update 7it-guard` (or `claude plugin update 7it-guard@7it-guard` from a terminal). The full report page says so when it was made with an older version.
+Turn on updates: in `/plugin`, open Marketplaces, choose `7it-guard`, Enable auto-update. Plugins added from GitHub do not update by themselves until you do. To update by hand: `/plugin marketplace update 7it-guard` (or `claude plugin update 7it-guard@7it-guard` from a terminal). When a newer version is out, the full report page says so (the link carries the version), and so does the last line of the text report in a run that already downloads the 7Maps list (only when the app publishes an MCP server; no request is made just for this).
 
 Needs Node.js 18 or newer. No account. The plugin asks for an optional 7IT key when you enable it; leave it empty unless you have one.
 
