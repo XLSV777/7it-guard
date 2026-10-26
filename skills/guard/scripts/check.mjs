@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 7IT Guard 0.3.2: checks a deployed web app from the outside, on YOUR machine.
+// 7IT Guard 0.4.2: checks a deployed web app from the outside, on YOUR machine.
 //
 //   node check.mjs <address> [--owner] [--json] [--no-link] [--no-7maps] [--token]
 //
@@ -24,7 +24,8 @@
 // theirs AND the app carries the ownership token) it names the backend the app's own browser
 // code uses and gives the Security Advisor steps the owner follows in their own account.
 
-import { Resolver } from 'node:dns/promises';
+import { Resolver, lookup as dnsLookup } from 'node:dns/promises';
+import { BlockList } from 'node:net';
 import { deflateRawSync } from 'node:zlib';
 import { createHash, randomBytes } from 'node:crypto';
 import tls from 'node:tls';
@@ -32,7 +33,7 @@ import { pathToFileURL } from 'node:url';
 
 // ------------------------------------------------------------------ 1. settings and helpers
 
-export const VERSION = '0.4.1';
+export const VERSION = '0.4.2';
 const UA = `Mozilla/5.0 (compatible; 7ITGuard/${VERSION}; +https://7it.co.il/tools/guard/)`;
 export const REPORT_BASE = 'https://7it.co.il/tools/guard/report/';
 export const REVIEW_URL = 'https://7it.co.il/services/ai-built-apps/';
@@ -61,6 +62,37 @@ export const mailDomainOf = (host) => {
   return p.slice(/\.(co|com|org|net|ac|gov|edu)\.[a-z]{2}$/i.test(host) ? -3 : -2).join('.');
 };
 
+// Host names that are never a public app: IP literals, local and reserved suffixes, and the
+// wildcard DNS services that answer any address (127.0.0.1.nip.io). A trailing dot is removed first.
+const LOCAL_NAME = /(^|\.)(localhost|local|internal|lan|home|corp|intranet|private|test|invalid|example|arpa|nip\.io|sslip\.io|xip\.io|localtest\.me|lvh\.me)$/;
+export const publicName = (host) => {
+  const h = String(host || '').toLowerCase().replace(/\.+$/, '');
+  return !!h && h.includes('.') && !/^[\d.]+$/.test(h) && !h.includes(':') && !h.includes('[') && !LOCAL_NAME.test(h);
+};
+
+// Addresses that are not on the public internet: loopback, private ranges, link-local, CGNAT,
+// unique local IPv6, multicast and reserved space (IPv4-mapped IPv6 addresses are covered too).
+const PRIVATE_NETS = new BlockList();
+for (const [a, p] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4]]) PRIVATE_NETS.addSubnet(a, p, 'ipv4');
+for (const [a, p] of [['::', 127], ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8], ['2001:db8::', 32]]) PRIVATE_NETS.addSubnet(a, p, 'ipv6');
+export function privateAddress(addr) {
+  const a = String(addr || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/, '');
+  if (!a) return true;
+  // NAT64 (64:ff9b::/96) carries an IPv4 address in its last 32 bits.
+  const n64 = /^64:ff9b::(?:([0-9a-f]{1,4}):([0-9a-f]{1,4})|(\d+\.\d+\.\d+\.\d+))$/.exec(a);
+  if (n64) {
+    if (n64[3]) return privateAddress(n64[3]);
+    const hi = parseInt(n64[1], 16), lo = parseInt(n64[2], 16);
+    return privateAddress([hi >> 8, hi & 255, lo >> 8, lo & 255].join('.'));
+  }
+  try { return PRIVATE_NETS.check(a, a.includes(':') ? 'ipv6' : 'ipv4'); } catch { return true; }
+}
+const systemLookup = (host) => dnsLookup(host, { all: true, verbatim: true });
+
+// Text that came from the app or its DNS (a cookie name, a Server header, an address) is shown in
+// the report as data: printable ASCII only, and short.
+export const clean = (v, max = 60) => String(v ?? '').replace(/\s+/g, ' ').replace(/[^\x20-\x7e]/g, '').trim().slice(0, max);
+
 // Accepts myapp.com, https://myapp.com/path, http://... Refuses private and local addresses.
 export function normalizeTarget(raw) {
   const s = String(raw || '').trim();
@@ -68,8 +100,9 @@ export function normalizeTarget(raw) {
   try {
     const u = new URL(/^https?:\/\//i.test(s) ? s : `https://${s}`);
     if (!/^https?:$/.test(u.protocol)) return null;
-    const h = u.hostname.toLowerCase();
-    if (!h.includes('.') || /^[\d.]+$/.test(h) || h.includes(':') || /(^|\.)(localhost|local|internal|lan|test|invalid|example)$/.test(h)) return null;
+    const h = u.hostname.toLowerCase().replace(/\.+$/, '');
+    if (!publicName(h)) return null;
+    u.hostname = h;
     u.hash = '';
     u.search = '';
     u.protocol = 'https:';
@@ -108,7 +141,23 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 // One small HTTP client: follows redirects itself (so it can count them), reads at most
 // `max` bytes of a body, and keeps a log of every host it talked to (shown in the report).
-export function makeNet({ fetchImpl = globalThis.fetch, timeoutMs = TIMEOUT_MS } = {}) {
+// Every hop, the first one included, must be https:// (only a request made with allowHttp may
+// start on http://, and its redirects must be https:// again), must name a public host, and that
+// host must resolve only to public addresses. A refused hop is never requested: the answer carries
+// error 'refused' and refused: 'http' | 'scheme' | 'private'. lookup(host) returns the addresses
+// ([{ address }]); null skips the address check (the tests, whose fetch never leaves the machine).
+export function makeNet({ fetchImpl = globalThis.fetch, timeoutMs = TIMEOUT_MS, lookup = systemLookup } = {}) {
+  const verdicts = new Map(); // host -> Promise<null | 'private'>
+  const hostVerdict = (host) => {
+    if (!verdicts.has(host)) verdicts.set(host, (async () => {
+      if (!publicName(host)) return 'private';
+      if (!lookup) return null;
+      let addrs;
+      try { addrs = await lookup(host); } catch { return null; } // no answer: the request itself then fails as dns
+      return (Array.isArray(addrs) ? addrs : [addrs]).some((x) => privateAddress(typeof x === 'string' ? x : x?.address)) ? 'private' : null;
+    })());
+    return verdicts.get(host);
+  };
   const inFlight = new Map();
   const waiting = new Map();
   const hosts = new Map(); // host -> number of requests
@@ -143,13 +192,18 @@ export function makeNet({ fetchImpl = globalThis.fetch, timeoutMs = TIMEOUT_MS }
   }
 
   // GET (or HEAD) with manual redirects. Returns { ok, status, url, headers, text, ms, hops, error }.
-  async function get(url, { method = 'GET', headers = {}, max = 400_000, follow = true, body } = {}) {
+  async function get(url, { method = 'GET', headers = {}, max = 400_000, follow = true, body, allowHttp = false } = {}) {
     let current = url;
     let hops = 0;
     const t0 = Date.now();
     for (;;) {
-      let host;
-      try { host = new URL(current).hostname; } catch { return { ok: false, status: 0, url: current, headers: new Headers(), text: '', ms: 0, hops, error: 'bad_url' }; }
+      let u;
+      try { u = new URL(current); } catch { return { ok: false, status: 0, url: current, headers: new Headers(), text: '', ms: 0, hops, error: 'bad_url' }; }
+      if (/^https?:$/.test(u.protocol)) { u.hostname = u.hostname.toLowerCase().replace(/\.+$/, ''); current = u.href; }
+      const host = u.hostname;
+      const webOk = u.protocol === 'https:' || (u.protocol === 'http:' && allowHttp && hops === 0);
+      const refused = webOk ? await hostVerdict(host) : u.protocol === 'http:' ? 'http' : 'scheme';
+      if (refused) return { ok: false, status: 0, url: current, headers: new Headers(), text: '', ms: Date.now() - t0, hops, error: 'refused', refused };
       hosts.set(host, (hosts.get(host) || 0) + 1);
       await acquire(host);
       let res;
@@ -219,50 +273,99 @@ function attrs(tag) {
   }
   return out;
 }
-const textOf = (html) => html.replace(/<script\b[\s\S]*?<\/script>/gi, ' ').replace(/<style\b[\s\S]*?<\/style>/gi, ' ').replace(/<!--[\s\S]*?-->/g, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;|&#160;/g, ' ').replace(/\s+/g, ' ').trim();
+// Lower-cases ASCII letters only, so every index stays the same as in the original text.
+const lowerAscii = (s) => s.replace(/[A-Z]+/g, (m) => m.toLowerCase());
+// The <tag ...>inner</tag> blocks of a page, found with indexOf in one pass (no backtracking
+// regex, so a hostile page cannot make it slow): the first ">" after the opening tag ends it, and
+// the first "</tag>" after that closes it. When no closing tag is left, the scan stops.
+function blocks(html, tag, lower = lowerAscii(html)) {
+  const out = [];
+  const open = '<' + tag, close = '</' + tag + '>';
+  let i = 0;
+  for (;;) {
+    const s = lower.indexOf(open, i);
+    if (s < 0) break;
+    if (/\w/.test(lower[s + open.length] || '')) { i = s + open.length; continue; } // <abbr is not <a
+    const gt = lower.indexOf('>', s + open.length);
+    if (gt < 0) break;
+    const e = lower.indexOf(close, gt + 1);
+    if (e < 0) break;
+    out.push({ index: s, end: e + close.length, attrs: html.slice(s + open.length, gt), inner: html.slice(gt + 1, e) });
+    i = e + close.length;
+  }
+  return out;
+}
+function comments(html) {
+  const out = [];
+  let i = 0;
+  for (;;) {
+    const s = html.indexOf('<!--', i);
+    if (s < 0) break;
+    const e = html.indexOf('-->', s + 4);
+    if (e < 0) break;
+    out.push({ index: s, end: e + 3 });
+    i = e + 3;
+  }
+  return out;
+}
+// The text with the given spans cut out (each one replaced by a space; a span inside another is skipped).
+function cut(html, spans) {
+  let out = '', at = 0;
+  for (const b of spans.sort((x, y) => x.index - y.index)) { if (b.index < at) continue; out += html.slice(at, b.index) + ' '; at = b.end; }
+  return out + html.slice(at);
+}
+const textOf = (html) => {
+  const lower = lowerAscii(html);
+  return cut(html, [...blocks(html, 'script', lower), ...blocks(html, 'style', lower), ...comments(html)]).replace(/<[^<>]+>/g, ' ').replace(/&nbsp;|&#160;/g, ' ').replace(/\s+/g, ' ').trim();
+};
+
+// At most this much of the home page is read by the HTML checks.
+export const HTML_MAX = 300_000;
 
 // Everything the checks need from the home page, read once.
 export function readHtml(html, pageUrl) {
+  html = String(html || '').slice(0, HTML_MAX);
+  const lower = lowerAscii(html);
   const headEnd = (() => { const i = html.search(/<\/head>/i); return i < 0 ? html.length : i; })();
   const metas = {};
-  for (const m of html.matchAll(/<meta\b[^>]*>/gi)) {
+  for (const m of html.matchAll(/<meta\b[^<>]*>/gi)) {
     const a = attrs(m[0]);
     const key = (a.name || a.property || a['http-equiv'] || '').toLowerCase();
     if (key && !(key in metas)) metas[key] = a.content ?? '';
   }
-  const scripts = [...html.matchAll(/<script\b[^>]*>/gi)].map((m) => {
+  const scripts = [...html.matchAll(/<script\b[^<>]*>/gi)].map((m) => {
     const a = attrs(m[0]);
     let src = null;
     if (a.src) { try { src = new URL(a.src, pageUrl).href; } catch { src = null; } }
     return { src, inHead: m.index < headEnd, async: 'async' in a, defer: 'defer' in a, module: (a.type || '').toLowerCase() === 'module', ld: /ld\+json/i.test(a.type || '') };
   });
-  const linkTags = [...html.matchAll(/<link\b[^>]*>/gi)].map((m) => attrs(m[0]));
+  const linkTags = [...html.matchAll(/<link\b[^<>]*>/gi)].map((m) => attrs(m[0]));
   const preloads = linkTags.filter((a) => /modulepreload/i.test(a.rel || '') && a.href).map((a) => { try { return new URL(a.href, pageUrl).href; } catch { return null; } }).filter(Boolean);
   const canonical = (linkTags.find((a) => /(^|\s)canonical(\s|$)/i.test(a.rel || '')) || {}).href || null;
-  const htmlTag = attrs((html.match(/<html\b[^>]*>/i) || ['<html>'])[0]);
-  const title = ((html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '').replace(/\s+/g, ' ').trim();
+  const htmlTag = attrs((html.match(/<html\b[^<>]*>/i) || ['<html>'])[0]);
+  const title = ((blocks(html, 'title', lower)[0] || {}).inner || '').replace(/\s+/g, ' ').trim();
 
-  const images = [...html.matchAll(/<img\b[^>]*>/gi)].map((m) => attrs(m[0]));
+  const images = [...html.matchAll(/<img\b[^<>]*>/gi)].map((m) => attrs(m[0]));
   const imgNoAlt = images.filter((a) => !('alt' in a) && a.role !== 'presentation' && a['aria-hidden'] !== 'true').length;
 
   // Form fields: labelled by <label for>, by wrapping <label>, or by aria-label/-labelledby/title.
-  const labelFor = new Set([...html.matchAll(/<label\b[^>]*>/gi)].map((m) => attrs(m[0]).for).filter(Boolean));
-  const labelSpans = [];
-  for (const m of html.matchAll(/<label\b[\s\S]*?<\/label>/gi)) labelSpans.push([m.index, m.index + m[0].length]);
-  let fields = 0, unlabeled = 0;
-  for (const m of html.matchAll(/<(input|select|textarea)\b[^>]*>/gi)) {
+  const labelFor = new Set([...html.matchAll(/<label\b[^<>]*>/gi)].map((m) => attrs(m[0]).for).filter(Boolean));
+  const labelSpans = blocks(html, 'label', lower).map((b) => [b.index, b.end]); // in order, never overlapping
+  let fields = 0, unlabeled = 0, li = 0;
+  for (const m of html.matchAll(/<(input|select|textarea)\b[^<>]*>/gi)) {
     const a = attrs(m[0]);
     const type = (a.type || '').toLowerCase();
     if (m[1].toLowerCase() === 'input' && /^(hidden|submit|button|reset|image)$/.test(type)) continue;
     fields++;
-    const named = a['aria-label'] || a['aria-labelledby'] || a.title || (a.id && labelFor.has(a.id)) || labelSpans.some(([s, e]) => m.index > s && m.index < e);
+    while (li < labelSpans.length && labelSpans[li][1] <= m.index) li++;
+    const named = a['aria-label'] || a['aria-labelledby'] || a.title || (a.id && labelFor.has(a.id)) || (li < labelSpans.length && m.index > labelSpans[li][0] && m.index < labelSpans[li][1]);
     if (!named) unlabeled++;
   }
-  const hasName = (a, inner) => !!(a['aria-label'] || a['aria-labelledby'] || a.title || textOf(inner) || /<img\b[^>]*\balt\s*=\s*["'][^"']+["']/i.test(inner) || /<title>[^<]+<\/title>/i.test(inner));
-  const buttons = [...html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/gi)];
-  const unnamedButtons = buttons.filter((m) => !hasName(attrs('<b ' + m[1] + '>'), m[2])).length;
-  const links = [...html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)].filter((m) => /\bhref\s*=/.test(m[1]));
-  const unnamedLinks = links.filter((m) => !hasName(attrs('<a ' + m[1] + '>'), m[2])).length;
+  const hasName = (a, inner) => !!(a['aria-label'] || a['aria-labelledby'] || a.title || textOf(inner) || [...inner.matchAll(/<img\b[^<>]*>/gi)].some((m) => attrs(m[0]).alt) || /<title>[^<]+<\/title>/i.test(inner));
+  const buttons = blocks(html, 'button', lower);
+  const unnamedButtons = buttons.filter((b) => !hasName(attrs('<b ' + b.attrs + '>'), b.inner)).length;
+  const links = blocks(html, 'a', lower).filter((b) => /\bhref\s*=/i.test(b.attrs));
+  const unnamedLinks = links.filter((b) => !hasName(attrs('<a ' + b.attrs + '>'), b.inner)).length;
 
   const viewport = (metas.viewport || '').toLowerCase();
   const text = textOf(html);
@@ -286,13 +389,17 @@ export function readHtml(html, pageUrl) {
     main: /<main\b|role\s*=\s*["']main["']/i.test(html),
     textLength: text.length,
     // A page rendered in the browser sends an almost empty shell: the HTML checks see little.
-    shell: text.length < 200 && /<div\b[^>]*id\s*=\s*["'](root|app|__next|svelte|q-app)["']/i.test(html),
-    mixed: [...html.matchAll(/<(script|link|iframe|img)\b[^>]*(?:src|href)\s*=\s*["']http:\/\/[^"']+["'][^>]*>/gi)].filter((m) => m[1].toLowerCase() !== 'link' || /stylesheet/i.test(m[0])).length,
+    shell: text.length < 200 && [...html.matchAll(/<div\b[^<>]*>/gi)].some((m) => /^(root|app|__next|svelte|q-app)$/i.test(attrs(m[0]).id || '')),
+    mixed: [...html.matchAll(/<(script|link|iframe|img)\b[^<>]*>/gi)].filter((m) => {
+      const a = attrs(m[0]);
+      return /^http:\/\//i.test(a.src || a.href || '') && (m[1].toLowerCase() !== 'link' || /stylesheet/i.test(m[0]));
+    }).length,
   };
 }
 
 // Where the app runs, from its headers and markup. Used to pick the right fix snippet.
 export function stackOf(headers, html) {
+  html = String(html || '').slice(0, HTML_MAX);
   const h = (k) => (headers.get(k) || '').toLowerCase();
   const s = new Set();
   if (h('x-vercel-id') || h('server') === 'vercel') s.add('vercel');
@@ -301,7 +408,7 @@ export function stackOf(headers, html) {
   if (/nginx/.test(h('server'))) s.add('nginx');
   if (/apache/.test(h('server'))) s.add('apache');
   if (/next\.js/.test(h('x-powered-by')) || /\/_next\/static\//.test(html)) s.add('nextjs');
-  if (/<script[^>]+type=["']module["'][^>]+src=["'][^"']*\/assets\/index-[\w-]+\.js/i.test(html)) s.add('vite');
+  if ([...html.matchAll(/<script\b[^<>]*>/gi)].some((m) => { const a = attrs(m[0]); return (a.type || '').toLowerCase() === 'module' && /\/assets\/index-[\w-]+\.js/.test(a.src || ''); })) s.add('vite');
   if (/lovable/i.test(html)) s.add('lovable');
   return [...s];
 }
@@ -351,7 +458,7 @@ function headerFindings(headers, add) {
   const cookies = typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : [];
   const insecure = [], noSameSite = [];
   for (const c of cookies) {
-    const name = c.split('=')[0].trim().slice(0, 40);
+    const name = clean(c.split('=')[0], 40) || '(no name)';
     if (!/;\s*secure/i.test(c)) insecure.push(name);
     if (!/;\s*samesite\s*=/i.test(c)) noSameSite.push(name);
   }
@@ -359,7 +466,7 @@ function headerFindings(headers, add) {
   if (noSameSite.length) add('cookie_samesite', 'security', 'low', `${plural(noSameSite.length, 'cookie')} without a SameSite setting (${noSameSite.slice(0, 3).join(', ')}).`, 'Set SameSite=Lax (or Strict) on cookies so other sites cannot send them along with forged requests.');
 
   const version = [get('server'), get('x-powered-by')].filter(Boolean).find((v) => /\d+\.\d+/.test(v));
-  if (version) add('version_leak', 'security', 'low', `The server announces its software version (${version.slice(0, 40)}).`, 'Remove the version from the Server and X-Powered-By headers; it tells attackers which known flaws to try.');
+  if (version) add('version_leak', 'security', 'low', `The server announces its software version (${clean(version, 40)}).`, 'Remove the version from the Server and X-Powered-By headers; it tells attackers which known flaws to try.');
 }
 
 // Is a source map served next to one of the first scripts? Reads the first 96 bytes only.
@@ -367,7 +474,7 @@ async function sourceMapCheck(net, scripts, add) {
   for (const src of scripts.slice(0, 3)) {
     const r = await net.get(src + '.map', { headers: { Range: 'bytes=0-96' }, max: 96 });
     if ((r.status === 200 || r.status === 206) && /"version"|"mappings"|"sources"/.test(r.text)) {
-      add('sourcemap_public', 'secrets', 'high', `A JavaScript source map is public (${new URL(src).pathname}.map).`, 'Stop publishing .map files in production (for Vite: build.sourcemap false; for Next.js: productionBrowserSourceMaps false), so nobody can rebuild your original source and any key written in it.');
+      add('sourcemap_public', 'secrets', 'high', `A JavaScript source map is public (${clean(new URL(src).pathname, 120)}.map).`, 'Stop publishing .map files in production (for Vite: build.sourcemap false; for Next.js: productionBrowserSourceMaps false), so nobody can rebuild your original source and any key written in it.');
       return true;
     }
   }
@@ -378,7 +485,7 @@ async function performanceChecks(net, home, page, firstParty, add, metrics) {
   metrics.ttfb_ms = home.ms;
   metrics.html_kb = kb(home.text.length);
   metrics.scripts = page.scripts.filter((s) => s.src).length;
-  metrics.compression = (home.headers.get('content-encoding') || 'none').toLowerCase();
+  metrics.compression = clean(home.headers.get('content-encoding'), 20).toLowerCase() || 'none';
   if (home.ms > 1800) add('slow_ttfb', 'performance', 'medium', `The server took ${(home.ms / 1000).toFixed(1)} s to start answering.`, 'Cache the home page at the edge (static or ISR), or find the slow database call or cold start behind it.');
   else if (home.ms > 800) add('slow_ttfb', 'performance', 'low', `The server took ${(home.ms / 1000).toFixed(1)} s to start answering.`, 'Aim for under 0.8 s: cache the page at the edge or make the first database call faster.');
   if (home.text.length > 500_000) add('html_heavy', 'performance', 'medium', `The home page HTML weighs ${Math.round(home.text.length / 1024)} KB.`, 'Move inlined data and SVGs out of the HTML, and send only what the first screen needs.');
@@ -445,10 +552,15 @@ async function seoChecks(net, origin, home, page, add, metrics) {
     }
     if (blocksAll) add('robots_blocks_all', 'seo', 'high', 'robots.txt blocks every crawler from the whole site.', 'Change "Disallow: /" under "User-agent: *" before launch, unless the app must stay out of search.');
   }
-  const sitemapUrl = ((robotsText.match(/^\s*sitemap\s*:\s*(\S+)/im) || [])[1]) || origin + '/sitemap.xml';
+  // The sitemap robots.txt names is read only when it is on the app's own origin.
+  let sitemapUrl = origin + '/sitemap.xml';
+  try {
+    const named = new URL(((robotsText.match(/^\s*sitemap\s*:\s*(\S+)/im) || [])[1]) || sitemapUrl, origin);
+    if (named.origin === origin) sitemapUrl = named.href;
+  } catch { /* keep /sitemap.xml */ }
   let sitemap = false;
   try {
-    const sm = await net.get(new URL(sitemapUrl, origin).href, { max: 2000 });
+    const sm = await net.get(sitemapUrl, { max: 2000 });
     sitemap = sm.ok && /<(urlset|sitemapindex)\b/i.test(sm.text);
   } catch { sitemap = false; }
   metrics.sitemap = sitemap;
@@ -495,7 +607,7 @@ export async function mcpFind(net, origin, homeText) {
   const addUrl = (raw) => {
     try {
       const u = new URL(raw, origin);
-      if (u.protocol === 'https:' && found.size < 5) found.add(u.origin + u.pathname.replace(/\/+$/, ''));
+      if (u.protocol === 'https:' && found.size < 5) found.add(clean(u.origin + u.pathname.replace(/\/+$/, ''), 200));
     } catch { /* not an address */ }
   };
   const fromCard = (j) => { for (const r of Array.isArray(j?.remotes) ? j.remotes : []) if (r && typeof r.url === 'string') addUrl(r.url); };
@@ -566,8 +678,11 @@ export async function emailCheck(domain, dns) {
     if (t.some((x) => /p=/i.test(x)) || c.length) dkim.push(s);
   });
   const all = spf[0]?.match(/([~?+-])all\b/i)?.[1] || (spf[0] && /\ball\b/i.test(spf[0]) ? '+' : null);
-  const policy = tag('p');
-  const pct = tag('pct') ? Number(tag('pct')) : null;
+  // Only the three policies DMARC defines are kept; anything else in the record is 'invalid'.
+  const rawPolicy = tag('p');
+  const policy = rawPolicy == null ? null : /^(none|quarantine|reject)$/.test(rawPolicy) ? rawPolicy : 'invalid';
+  const rawPct = tag('pct');
+  const pct = rawPct == null ? null : /^\d{1,3}$/.test(rawPct) ? Number(rawPct) : -1;
   return {
     domain, mx: mxs.length > 0, spf: spf.length === 1, spf_multiple: spf.length > 1, spf_all: all,
     dmarc: !!dmarc, dmarc_policy: policy, dmarc_pct: pct, dmarc_reports: !!tag('rua'),
@@ -585,7 +700,7 @@ function emailFindings(m, add) {
   if (m.spf_multiple) add('spf_multiple', 'email', 'high', `${d} has more than one SPF record.`, 'Merge them into a single record; two records make SPF fail for every message.');
   if (m.spf_all === '+') add('spf_pass_all', 'email', 'high', 'The SPF record ends in +all, which lets anyone send as the domain.', 'End it in -all or ~all.');
   if (!m.dmarc) add('no_dmarc', 'email', 'medium', `${d} has no DMARC record, so mail can be spoofed and can land in spam.`, `Publish "v=DMARC1; p=none; rua=mailto:dmarc@${d}" at _dmarc.${d}, read the reports, then move to p=quarantine and p=reject.`);
-  else if (!m.dmarc_enforced) add('dmarc_not_enforced', 'email', 'low', `DMARC is set to ${m.dmarc_policy || 'none'}, so spoofed mail is still delivered.`, 'When the reports show every real sender passing, move to p=quarantine, then p=reject.');
+  else if (!m.dmarc_enforced) add('dmarc_not_enforced', 'email', 'low', m.dmarc_policy === 'invalid' ? 'The DMARC record has no valid policy (p= must be none, quarantine or reject), so spoofed mail is still delivered.' : `DMARC is set to ${m.dmarc_policy || 'none'}, so spoofed mail is still delivered.`, 'When the reports show every real sender passing, move to p=quarantine, then p=reject.');
   if (!m.dkim.length) add('no_dkim', 'email', 'low', 'No DKIM key found under the common selectors.', 'Turn on DKIM signing in the service that sends your mail and publish the record it gives you. (A key under an unusual selector cannot be seen from outside.)');
   if (m.dmarc && !m.dmarc_reports) add('no_dmarc_reports', 'email', 'low', 'DMARC sends its reports nowhere.', 'Add rua=mailto:... to the DMARC record to see who sends mail as your domain.');
 }
@@ -609,7 +724,7 @@ async function pageSpeed(net, url, key, add, metrics) {
 
 // Is the ownership token on the app? Home page meta tag (already fetched) or /7it-verify.txt.
 async function ownershipToken(net, origin, html) {
-  const meta = [...html.matchAll(/<meta\b[^>]*>/gi)].map((m) => attrs(m[0])).find((a) => (a.name || '').toLowerCase() === '7it-site-verification');
+  const meta = [...String(html).slice(0, HTML_MAX).matchAll(/<meta\b[^<>]*>/gi)].map((m) => attrs(m[0])).find((a) => (a.name || '').toLowerCase() === '7it-site-verification');
   if (meta && TOKEN_RE.test(meta.content || '')) return 'meta';
   const file = await net.get(`${origin}/7it-verify.txt`, { max: 200 });
   return file.ok && TOKEN_RE.test(file.text) ? 'file' : null;
@@ -706,7 +821,7 @@ function secretScan(files, add) {
     for (const [id, label, sev, re] of SECRET_SHAPES) {
       if (seen.has(id) || !re.test(text)) continue;
       seen.add(id);
-      add('secret_' + id, 'secrets', sev, `Something shaped like ${label} is in the code sent to browsers (${path}).`, 'Rotate it now in that service, move the call that needs it to a server function, and keep the key in server-side environment variables only.');
+      add('secret_' + id, 'secrets', sev, `Something shaped like ${label} is in the code sent to browsers (${clean(path, 120)}).`, 'Rotate it now in that service, move the call that needs it to a server function, and keep the key in server-side environment variables only.');
     }
   }
 }
@@ -842,7 +957,8 @@ export function score(findings, checked) {
 export async function runCheck(rawUrl, { owner = false, maps = true, deps = {} } = {}) {
   const target = normalizeTarget(rawUrl);
   if (!target) return { error: 'bad_url', message: 'That is not a public web address. Pass a domain such as myapp.com or a full https:// address.' };
-  const net = makeNet({ fetchImpl: deps.fetchImpl });
+  // A caller that brings its own fetch (the tests) also brings its own address lookup, or none.
+  const net = makeNet({ fetchImpl: deps.fetchImpl, lookup: deps.lookup !== undefined ? deps.lookup : deps.fetchImpl ? null : systemLookup });
   const dns = deps.dns || new Resolver({ timeout: 5000, tries: 2 });
   const env = deps.env || process.env;
   const ctx = { host: target.hostname, origin: target.origin, tls: deps.tls || tlsInfo };
@@ -853,11 +969,21 @@ export async function runCheck(rawUrl, { owner = false, maps = true, deps = {} }
   const metrics = {};
   const info = {};
   const checked = {};
+  // Declared here because finish() reads them, also when the check stops early.
+  let stack = [];
+  let ownership = 'not_requested';
+  const shared = SHARED_APP_HOST.test(ctx.host);
+  const mailDomain = shared ? '' : mailDomainOf(ctx.host);
 
   const home = await net.get(target.href, { max: 2_000_000, headers: { Accept: 'text/html,application/xhtml+xml' } });
+  if (home.error === 'refused') {
+    if (!home.hops) return { error: 'bad_url', host: ctx.host, message: `${ctx.host} points to a private or local address, not a public one, so it was not checked.` };
+    // A redirect that leaves the public web is not followed; the report says so.
+    return finish({ fatal: home.refused === 'http' ? 'http_redirect' : 'private_redirect' });
+  }
   if (home.status === 0 && home.error === 'tls') {
     // Maybe the app only answers on plain HTTP.
-    const plain = await net.get(`http://${ctx.host}/`, { max: 1000 });
+    const plain = await net.get(`http://${ctx.host}/`, { max: 1000, allowHttp: true });
     if (plain.status) return finish({ fatal: 'no_https' });
   }
   if (!home.status) return { error: 'unreachable', host: ctx.host, message: `${ctx.host} did not answer (${home.error || 'no response'}). Check that the app is deployed at a public address and spelled right.` };
@@ -868,13 +994,11 @@ export async function runCheck(rawUrl, { owner = false, maps = true, deps = {} }
 
   const page = readHtml(home.text, finalUrl);
   const origin = new URL(finalUrl).origin;
-  const stack = stackOf(home.headers, home.text);
+  stack = stackOf(home.headers, home.text);
   const firstParty = page.scripts.map((s) => s.src).filter((u) => u && new URL(u).hostname === new URL(finalUrl).hostname);
 
   // Public checks, in parallel (each one is polite on its own).
-  const shared = SHARED_APP_HOST.test(ctx.host);
-  const mailDomain = shared ? '' : mailDomainOf(ctx.host);
-  const plainHttp = net.get(`http://${ctx.host}/`, { follow: false, max: 0 });
+  const plainHttp = net.get(`http://${ctx.host}/`, { follow: false, max: 0, allowHttp: true });
   const tasks = [
     (async () => {
       headerFindings(home.headers, add);
@@ -914,7 +1038,6 @@ export async function runCheck(rawUrl, { owner = false, maps = true, deps = {} }
   await Promise.all(tasks);
 
   // Deep checks: only when the person said the app is theirs AND the app carries the token.
-  let ownership = 'not_requested';
   if (owner) {
     const where = await ownershipToken(net, origin, home.text);
     if (!where) {
@@ -939,6 +1062,12 @@ export async function runCheck(rawUrl, { owner = false, maps = true, deps = {} }
   function finish({ fatal }) {
     if (fatal === 'no_https') {
       add('no_https', 'security', 'critical', 'The app does not answer over HTTPS.', 'Serve the app over HTTPS (most hosts issue a certificate automatically once the domain is connected) and redirect http:// to https://.');
+      checked.security = { ran: true };
+    } else if (fatal === 'http_redirect') {
+      add('no_https', 'security', 'critical', 'The app redirects to plain HTTP.', 'Serve the app over HTTPS only and redirect every http:// request to https://. The check did not follow the redirect.');
+      checked.security = { ran: true };
+    } else if (fatal === 'private_redirect') {
+      add('redirect_private', 'security', 'high', 'The address redirects off-site to a private address (or to one that is not a web address).', 'Point every redirect at the app\'s own public https:// address. A redirect into a private network can reach internal services; the check did not follow it.');
       checked.security = { ran: true };
     }
     findings.sort((a, b) => SEV_ORDER[a.sev] - SEV_ORDER[b.sev] || CATEGORIES.findIndex(([k]) => k === a.cat) - CATEGORIES.findIndex(([k]) => k === b.cat));

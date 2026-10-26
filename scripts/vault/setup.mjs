@@ -268,12 +268,21 @@ function dbUrl() {
   if (!p.ok) stop(p.why, { message: p.why === 'supabase_direct' ? 'This is the direct address, which GitHub cannot reach. Put the Session pooler address (Supabase: Connect, then Session pooler) as VAULT_DATABASE_URL in .7it-vault.env.' : 'The database address could not be read.' });
   return { p, vars };
 }
+// psql gets the address without its password (a command line is visible to other processes on
+// the machine); the password travels in PGPASSWORD, in the child's environment only.
+export function psqlArgs(dbUrl, baseEnv = process.env) {
+  const u = new URL(dbUrl);
+  const env = { ...baseEnv };
+  if (u.password) { env.PGPASSWORD = decodeURIComponent(u.password); u.password = ''; }
+  return { url: u.toString(), env };
+}
 function roleRun() {
   const repo = repoArg(), f = roleFile(repo);
   if (!existsSync(f)) stop('no_sql', { message: 'Run role-sql first.' });
   if (spawnSync('psql', ['--version'], { encoding: 'utf8', windowsHide: true }).status !== 0) stop('no_psql', { message: 'psql is not installed. Paste the SQL file into your database\'s SQL editor instead.' });
   const { p } = dbUrl();
-  const r = spawnSync('psql', [p.url, '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-f', f], { encoding: 'utf8', windowsHide: true });
+  const { url, env } = psqlArgs(p.url);
+  const r = spawnSync('psql', [url, '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-f', f], { encoding: 'utf8', windowsHide: true, env });
   say({ ok: r.status === 0, ...(r.status === 0 ? {} : { error: 'sql_failed', message: /permission denied|must have admin/i.test(r.stderr || '') ? 'The database refused pg_read_all_data. Use the other lines in the SQL file.' : /already exists/i.test(r.stderr || '') ? 'The read-only sign-in already exists. Nothing to do, or run role-sql --new to make a new password.' : 'The SQL did not run.' }) });
 }
 function dbSecret() {
