@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { inflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { runCheck, textReport, reportLink, normalizeTarget, localToken, mailDomainOf, gradeOf, mapsKey, mapsHash, mcpSessionsShape, supabaseIn } from '../skills/guard/scripts/check.mjs';
+import { APP_LINE, runCheck, textReport, reportLink,normalizeTarget, localToken, mailDomainOf, gradeOf, mapsKey, mapsHash, mcpSessionsShape, supabaseIn } from '../skills/guard/scripts/check.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -318,6 +318,14 @@ test('text report: order, link and the closing line', async () => {
     assert.match(t, /nothing about the app sent to 7IT/);
     assert.match(t, /^7IT Guard \d+\.\d+\.\d+ · /);
     assert.match(t, /Full report: https:\/\/7it\.co\.il\/tools\/guard\/report\/#r=[A-Za-z0-9_-]+\n/);
+    // 0.4.1: one neutral line naming the Guard app, right after the report link, with a fixed address (no host, no result).
+    const appLines = t.split('\n').filter((l) => l.startsWith('After launch:'));
+    assert.equal(appLines.length, 1);
+    assert.equal(appLines[0], APP_LINE);
+    assert.ok(APP_LINE.endsWith(' https://7it.co.il/guard/app/?from=plugin'));
+    assert.match(t, /Full report: [^\n]+\nAfter launch: /);
+    assert.ok(!appLines[0].includes(WEAK) && !appLines[0].includes('#'), 'the app line carries nothing from the check');
+    assert.equal(textReport(r, { link: false }).split('\n').filter((l) => l === APP_LINE).length, 1);
     const last = t.trim().split('\n').pop();
     assert.match(last, /^Not checked from outside: load and traffic spikes, scale limits, architecture/);
     assert.match(last, /https:\/\/7it\.co\.il\/services\/ai-built-apps\/$/);

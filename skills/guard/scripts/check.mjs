@@ -32,10 +32,14 @@ import { pathToFileURL } from 'node:url';
 
 // ------------------------------------------------------------------ 1. settings and helpers
 
-export const VERSION = '0.3.2';
+export const VERSION = '0.4.1';
 const UA = `Mozilla/5.0 (compatible; 7ITGuard/${VERSION}; +https://7it.co.il/tools/guard/)`;
 export const REPORT_BASE = 'https://7it.co.il/tools/guard/report/';
 export const REVIEW_URL = 'https://7it.co.il/services/ai-built-apps/';
+// 0.4.1: the 7IT Guard app, named once after the "Full report:" line. A fixed address: its only parameter says the line
+// came from the plugin, never the checked host or any result.
+export const APP_URL = 'https://7it.co.il/guard/app/?from=plugin';
+export const APP_LINE = `After launch: the 7IT Guard app checks this app from outside on a schedule and tells you when it stops answering: ${APP_URL}`;
 // 7Maps, the public map of MCP servers (also by 7IT). Used only when the app publishes an MCP server.
 export const MAPS_KNOWN = 'https://7it.co.il/7maps/known/';
 export const MAPS_PAGE = 'https://7it.co.il/7maps/s/';
@@ -1057,6 +1061,7 @@ export function textReport(report, { link = true } = {}) {
   const hosts = Object.keys(report.requests);
   lines.push('', `Requests: ${Object.values(report.requests).reduce((a, b) => a + b, 0)} from this machine to ${hosts.slice(0, 4).join(', ')}${hosts.length > 4 ? ` and ${hosts.length - 4} more` : ''}, plus public DNS. ${report.seconds} s.`);
   if (link) lines.push(`Full report: ${reportLink(report)}`);
+  lines.push(APP_LINE);
   lines.push(`Not checked from outside: load and traffic spikes, scale limits, architecture, business logic behind the login, cost at scale, backups and recovery, compliance. A senior review covers these: ${REVIEW_URL}`);
   return lines.join('\n');
 }
