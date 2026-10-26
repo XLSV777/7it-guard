@@ -124,6 +124,73 @@ node --test tests/check.test.mjs
 
 Every network call in the tests goes to a local mock server; DNS and TLS are stubbed.
 
+## Troubleshooting
+
+**Node.js is missing or older than 18** (`node: command not found`, or an error as soon as the check starts). Run `node --version`. Install the current LTS
+from https://nodejs.org and open a new terminal, then run the check again. A client that cannot run Node can use the
+hosted fallback, `https://7it.co.il/mcp?set=guard` (7IT then receives the address; see the privacy policy).
+
+**"That is not a public web address."** The check runs only against an app the public internet can reach. Local and
+private addresses (`localhost`, `127.0.0.1`, `.local`, `.internal`, `.test` and other reserved names) are refused on
+purpose. Deploy the app first, then pass its domain (`myapp.com`) or its full `https://` address.
+
+**The check is slow or says a page timed out.** Each request waits at most 12 seconds and the check asks at most 4
+things of your app at a time. A host that sleeps when idle (some hosting plans pause an app until the next visit) answers
+the first request slowly: open the app once in a browser and run the check again. A site that never answers gets a
+Reliability finding, not an error.
+
+**"The app does not answer over HTTPS."** Your host has not issued a certificate yet, or the domain is not connected to
+the app. Most hosts issue one by themselves a few minutes after the domain is connected. Check again after that.
+
+**Data exposure says "not checked".** The deep checks run only on your own app, with proof that it is yours. Run
+`/7it-guard:check myapp.com --token` (or ask Claude for the ownership token), add it to your app as a meta tag on the
+home page or as the file `/7it-verify.txt`, deploy, then run the check again with `--owner`.
+
+**The ownership token is not found.** The meta tag must be in the HTML the server sends, not added later by
+JavaScript: in a single-page app, put it in `index.html` (or the root layout), not in a component. A file goes in the
+folder your host serves as is (often `public/`). After a deploy, a cache can keep the old page for a minute or two: wait,
+then check again. The token runs nothing and can be removed afterwards.
+
+**The "Full report" link does not open the whole report.** The results travel inside the link after `#`, so very long
+reports are shortened (the fix sentences first, then the low items). Every finding is still in the terminal report, and
+`--json` prints all of it.
+
+**No Google PageSpeed scores.** They appear only with your own Google API key in `PAGESPEED_API_KEY`, set in the shell
+Claude Code runs in. Without a key, or when Google's limit for the key is reached, the rest of the check runs as usual.
+
+**The check downloaded a list from 7it.co.il.** That happens only when your app publishes an MCP server: the check
+looks up whether it is on 7Maps, with 2 characters of a hash, never your address. `--no-7maps` skips it.
+
+**`/7it-guard:fix` or `/7it-guard:vault` asks for a 7IT key.** The key is optional for the check and for fix (fix then
+works from the report alone). The vault needs a key whose plan includes it. Set or change the key in the plugin's
+settings ("7IT key (optional)").
+
+### When the 7IT Guard app (the watch from outside) says no or not yet
+
+The check on your own machine never depends on these: it keeps working as usual in every case below.
+
+- **"Guard is watching as many sites as it can take right now, so ... was not added."** The watch is at its limit of
+  sites for the moment. More places open as capacity is added, usually within a day. Nothing was stored; try again
+  tomorrow.
+- **"... is in line. Guard starts watching it within about N hours"** (or "as soon as a place opens"). Many sites joined
+  at once. The site is verified and kept; Guard starts watching it by itself. Nothing to do.
+- **"Today's places for Guard Pro on us are taken."** The site is watched once an hour meanwhile, and Guard Pro on us
+  starts by itself as a place opens, usually within a few days.
+- **"Guard reached its own daily limit for checks, so checks are paused until midnight UTC."** Checks start again by
+  themselves after midnight UTC. Nothing is lost.
+- **"Many new sign-ups came from this network today."** New sites from that network are paused until midnight UTC. Try
+  again after that, or from another network.
+- **"Signing in on a new device is slowed" or "paused for now."** Many sign-in attempts failed in a short time. Try again
+  in about 10 minutes (slowed) or a few hours (paused), or use a device that is already signed in.
+- **"This domain already has the most sites Guard watches for one owner."** Remove one of them in the app, then add the
+  new one.
+
+### Still stuck?
+
+Open an issue at https://github.com/XLSV777/7it-guard/issues with the plugin version (the first line of the report), the
+output of `node --version`, the command you ran, and the message you saw. Leave out keys, tokens and anything private:
+the address of your app is enough, and only if you are fine with it being public.
+
 ## Uninstall
 
 ```
