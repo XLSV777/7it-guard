@@ -1,0 +1,29 @@
+{
+  "description": "7IT Guard in the session: a short brief of the project's watched site at session start, and a warning before a deploy or push when the live site has critical or high findings. Both need .7it/guard.json in the project; without it they print nothing and send nothing.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/session/brief.mjs\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/session/predeploy.mjs\"",
+            "timeout": 90
+          }
+        ]
+      }
+    ]
+  }
+}

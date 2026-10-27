@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0 (2026-10-28)
+
+7IT Guard in the session, for a site 7IT Guard already watches. Off until the project adds `.7it/guard.json` with `{"site": "myapp.com"}`.
+
+- SessionStart hook (`scripts/session/brief.mjs`): a brief of at most 5 lines in a fixed template (site, status, open problems, top 3 by name, last check time), from `GET https://7it.co.il/guard/app/api/brief` with the 7IT key; cached 5 minutes per site. Prints nothing without the file, the key or an answer.
+- PreToolUse hook on Bash and PowerShell (`scripts/session/predeploy.mjs`): before `git push`, `vercel --prod`, `netlify deploy` or a `deploy` script, the outside check (`ship_check` on the guard set), at most once per 10 minutes per site; the 7IT Guard block when something critical or high is found. Warns by default; stops the command only with `"block": true`.
+- `/7it-guard:recheck` (`scripts/session/recheck.mjs`): checks again and lists what is gone (verified fixed), still open and new. A deep finding is never counted as fixed when the deep part could not run.
+- `hooks/hooks.json`.
+- Everything the hooks print is data in a fixed template: control, invisible and bidi characters and markup characters removed, every line capped, links only on https://7it.co.il, text that reads like an instruction replaced. The brief prints the plugin's own words for every problem code it knows.
+- README: "In the session" and what the hooks send. The check script reports 0.5.0.
+
 ## 0.4.3 (2026-10-27)
 
 - The app line after the "Full report:" link now starts with "Once your app is live:" (it said "After launch:", which read as 7IT's launch). Same address, same place, once.

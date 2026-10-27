@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 7IT Guard 0.4.3: checks a deployed web app from the outside, on YOUR machine.
+// 7IT Guard 0.5.0: checks a deployed web app from the outside, on YOUR machine.
 //
 //   node check.mjs <address> [--owner] [--json] [--no-link] [--no-7maps] [--token]
 //
@@ -33,7 +33,7 @@ import { pathToFileURL } from 'node:url';
 
 // ------------------------------------------------------------------ 1. settings and helpers
 
-export const VERSION = '0.4.3';
+export const VERSION = '0.5.0';
 const UA = `Mozilla/5.0 (compatible; 7ITGuard/${VERSION}; +https://7it.co.il/tools/guard/)`;
 export const REPORT_BASE = 'https://7it.co.il/tools/guard/report/';
 export const REVIEW_URL = 'https://7it.co.il/services/ai-built-apps/';

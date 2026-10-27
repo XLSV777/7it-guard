@@ -1,8 +1,8 @@
 {
   "name": "7it-guard",
   "displayName": "7IT Guard",
-  "version": "0.4.3",
-  "description": "Checks a deployed web app from the outside before it ships, on your own machine: HTTPS and security headers, a public source map, email authentication of its domain, speed, accessibility, SEO and reliability, plus exposed files and keys in the browser code once you confirm the app is yours, with guided steps to check Supabase or Firebase rules in your own account (it never reads your data). Scores eight categories, grades the app, and returns one prioritized list of what to fix first, with a full visual report that never leaves your browser. When the app publishes an MCP server, says whether it is on 7Maps. With a 7IT key, /7it-guard:vault sets up a nightly encrypted backup of your database and stored files into storage you own, with a weekly restore test, running in your own GitHub account.",
+  "version": "0.5.0",
+  "description": "Checks a deployed web app from the outside before it ships, on your own machine: HTTPS and security headers, a public source map, email authentication of its domain, speed, accessibility, SEO and reliability, plus exposed files and keys in the browser code once you confirm the app is yours, with guided steps to check Supabase or Firebase rules in your own account (it never reads your data). Scores eight categories, grades the app, and returns one prioritized list of what to fix first, with a full visual report that never leaves your browser. When the app publishes an MCP server, says whether it is on 7Maps. With a 7IT key, /7it-guard:vault sets up a nightly encrypted backup of your database and stored files into storage you own, with a weekly restore test, running in your own GitHub account. In Claude Code, a project that adds .7it/guard.json can also get a short brief of its watched site at session start, a pre-deploy check of the live site before a push or deploy, and /7it-guard:recheck to confirm a fix from outside.",
   "author": {
     "name": "7IT Solutions",
     "url": "https://7it.co.il/"
@@ -26,7 +26,7 @@
     "fix_key": {
       "type": "string",
       "title": "7IT key (optional)",
-      "description": "Leave empty unless you have a 7IT key. With a key, /7it-guard:fix fetches one strict fix playbook for your report, and /7it-guard:vault registers your backup vault; without one, fix works from the report alone. Kept in your system's secure storage.",
+      "description": "Leave empty unless you have a 7IT key. With a key, /7it-guard:fix fetches one strict fix playbook for your report, and /7it-guard:vault registers your backup vault, and the session brief reads the status of a site the key watches; without one, fix works from the report alone. Kept in your system's secure storage.",
       "required": false,
       "sensitive": true
     }
