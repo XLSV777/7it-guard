@@ -320,11 +320,11 @@ test('text report: order, link and the closing line', async () => {
     assert.match(t, /^7IT Guard \d+\.\d+\.\d+ · /);
     assert.match(t, /Full report: https:\/\/7it\.co\.il\/tools\/guard\/report\/#r=[A-Za-z0-9_-]+\n/);
     // 0.4.1: one neutral line naming the Guard app, right after the report link, with a fixed address (no host, no result).
-    const appLines = t.split('\n').filter((l) => l.startsWith('After launch:'));
+    const appLines = t.split('\n').filter((l) => l.startsWith('Once your app is live:'));
     assert.equal(appLines.length, 1);
     assert.equal(appLines[0], APP_LINE);
     assert.ok(APP_LINE.endsWith(' https://7it.co.il/guard/app/?from=plugin'));
-    assert.match(t, /Full report: [^\n]+\nAfter launch: /);
+    assert.match(t, /Full report: [^\n]+\nOnce your app is live: /);
     assert.ok(!appLines[0].includes(WEAK) && !appLines[0].includes('#'), 'the app line carries nothing from the check');
     assert.equal(textReport(r, { link: false }).split('\n').filter((l) => l === APP_LINE).length, 1);
     const last = t.trim().split('\n').pop();

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.3 (2026-10-27)
+
+- The app line after the "Full report:" link now starts with "Once your app is live:" (it said "After launch:", which read as 7IT's launch). Same address, same place, once.
+- The check script reports 0.4.3.
+
 ## 0.4.2 (2026-10-26)
 
 Security fixes.

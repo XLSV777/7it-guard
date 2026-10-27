@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 7IT Guard 0.4.2: checks a deployed web app from the outside, on YOUR machine.
+// 7IT Guard 0.4.3: checks a deployed web app from the outside, on YOUR machine.
 //
 //   node check.mjs <address> [--owner] [--json] [--no-link] [--no-7maps] [--token]
 //
@@ -33,14 +33,14 @@ import { pathToFileURL } from 'node:url';
 
 // ------------------------------------------------------------------ 1. settings and helpers
 
-export const VERSION = '0.4.2';
+export const VERSION = '0.4.3';
 const UA = `Mozilla/5.0 (compatible; 7ITGuard/${VERSION}; +https://7it.co.il/tools/guard/)`;
 export const REPORT_BASE = 'https://7it.co.il/tools/guard/report/';
 export const REVIEW_URL = 'https://7it.co.il/services/ai-built-apps/';
 // 0.4.1: the 7IT Guard app, named once after the "Full report:" line. A fixed address: its only parameter says the line
 // came from the plugin, never the checked host or any result.
 export const APP_URL = 'https://7it.co.il/guard/app/?from=plugin';
-export const APP_LINE = `After launch: the 7IT Guard app checks this app from outside on a schedule and tells you when it stops answering: ${APP_URL}`;
+export const APP_LINE = `Once your app is live: the 7IT Guard app checks it from outside on a schedule and tells you when it stops answering: ${APP_URL}`;
 // 7Maps, the public map of MCP servers (also by 7IT). Used only when the app publishes an MCP server.
 export const MAPS_KNOWN = 'https://7it.co.il/7maps/known/';
 // Update notice. The 7Maps bucket this script already downloads (only when the app publishes an MCP server) names the
