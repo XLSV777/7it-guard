@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## 0.5.0 (2026-10-28)
 
 7IT Guard in the session, for a site 7IT Guard already watches. Off until the project adds `.7it/guard.json` with `{"site": "myapp.com"}`.
