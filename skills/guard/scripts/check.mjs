@@ -41,6 +41,11 @@ export const REVIEW_URL = 'https://7it.co.il/services/ai-built-apps/';
 // came from the plugin, never the checked host or any result.
 export const APP_URL = 'https://7it.co.il/guard/app/?from=plugin';
 export const APP_LINE = `Once your app is live: the 7IT Guard app checks it from outside on a schedule and tells you when it stops answering: ${APP_URL}`;
+// 0.5.1: the 7IT Guard GitHub check (the Action XLSV777/7it-guard-check@v1, public on the GitHub Marketplace since
+// 2026-10-29): one line after the closing line that names it. The line is the same every run; the command and the skill
+// pass it on once per session, and not when the repository already uses the Action.
+export const GHCHECK = { public: true, url: 'https://7it.co.il/tools/guard/#github' };
+export const ghcheckLine = () => `On every push: the 7IT Guard GitHub check runs these outside checks after each deploy and keeps one comment on the pull request. Setup: ${GHCHECK.url}`;
 // 7Maps, the public map of MCP servers (also by 7IT). Used only when the app publishes an MCP server.
 export const MAPS_KNOWN = 'https://7it.co.il/7maps/known/';
 // Update notice. The 7Maps bucket this script already downloads (only when the app publishes an MCP server) names the
@@ -1167,7 +1172,7 @@ export function reportLink(report) {
   return `${REPORT_BASE}#r=${enc}`;
 }
 
-export function textReport(report, { link = true } = {}) {
+export function textReport(report, { link = true, ghcheck = GHCHECK.public } = {}) {
   const lines = [];
   const now = report.findings.filter((f) => f.sev === 'critical' || f.sev === 'high');
   const later = report.findings.filter((f) => f.sev === 'medium' || f.sev === 'low');
@@ -1227,6 +1232,7 @@ export function textReport(report, { link = true } = {}) {
   if (link) lines.push(`Full report: ${reportLink(report)}`);
   lines.push(APP_LINE);
   lines.push(`Not checked from outside: load and traffic spikes, scale limits, architecture, business logic behind the login, cost at scale, backups and recovery, compliance. A senior review covers these: ${REVIEW_URL}`);
+  if (ghcheck) lines.push(ghcheckLine());
   const upd = updateNote(report.latest_version);
   if (upd) lines.push(upd);
   return lines.join('\n');
@@ -1267,7 +1273,7 @@ export async function main(argv) {
     return report.error === 'bad_url' ? 2 : 3;
   }
   if (flags.has('--json')) {
-    console.log(JSON.stringify({ ...report, report_url: flags.has('--no-link') ? null : reportLink(report), review_url: REVIEW_URL }, null, 1));
+    console.log(JSON.stringify({ ...report, report_url: flags.has('--no-link') ? null : reportLink(report), ...(GHCHECK.public ? { ghcheck_url: GHCHECK.url } : {}), review_url: REVIEW_URL }, null, 1));
   } else {
     console.log(textReport(report, { link: !flags.has('--no-link') }));
   }

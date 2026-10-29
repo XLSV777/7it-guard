@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { inflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { VERSION, APP_LINE, CHANNEL_DEFAULT, channelOf, olderThan, parseVersion, updateNote, runCheck, textReport, reportLink,normalizeTarget, localToken, mailDomainOf, gradeOf, mapsKey, mapsHash, mcpSessionsShape, supabaseIn, readHtml, stackOf, privateAddress, publicName, clean, makeNet } from '../skills/guard/scripts/check.mjs';
+import { VERSION, APP_LINE, GHCHECK, ghcheckLine, CHANNEL_DEFAULT, channelOf, olderThan, parseVersion, updateNote, runCheck, textReport, reportLink,normalizeTarget, localToken, mailDomainOf, gradeOf, mapsKey, mapsHash, mcpSessionsShape, supabaseIn, readHtml, stackOf, privateAddress, publicName, clean, makeNet } from '../skills/guard/scripts/check.mjs';
 import { psqlArgs } from '../scripts/vault/setup.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -327,9 +327,18 @@ test('text report: order, link and the closing line', async () => {
     assert.match(t, /Full report: [^\n]+\nOnce your app is live: /);
     assert.ok(!appLines[0].includes(WEAK) && !appLines[0].includes('#'), 'the app line carries nothing from the check');
     assert.equal(textReport(r, { link: false }).split('\n').filter((l) => l === APP_LINE).length, 1);
-    const last = t.trim().split('\n').pop();
+    // 0.5.1: the GitHub check line comes once, right after the closing line (GHCHECK.public); without it the closing line is last.
+    const tail = t.trim().split('\n');
+    assert.equal(tail.pop(), ghcheckLine());
+    assert.equal(GHCHECK.public, true);
+    assert.equal(t.split('On every push').length, 2);
+    assert.ok(ghcheckLine().endsWith(' https://7it.co.il/tools/guard/#github') && !ghcheckLine().includes(WEAK));
+    const last = tail.pop();
     assert.match(last, /^Not checked from outside: load and traffic spikes, scale limits, architecture/);
     assert.match(last, /https:\/\/7it\.co\.il\/services\/ai-built-apps\/$/);
+    const off = textReport(r, { ghcheck: false }).trim().split('\n');
+    assert.match(off.pop(), /^Not checked from outside: /);
+    assert.ok(!off.some((l) => l.startsWith('On every push')));
     assert.ok(!/\u2014/.test(t), 'no em dash');
     assert.ok(!/\bfree\b|\$\d|price|discount|offer/i.test(t), 'no prices or offers in the output');
     assert.match(t, new RegExp(localToken(WEAK)));

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The report ends with one line naming the 7IT Guard GitHub check (the Action XLSV777/7it-guard-check@v1, now on the GitHub Marketplace): "On every push: ... Setup: https://7it.co.il/tools/guard/#github", after the closing "Not checked from outside" line; `--json` adds `ghcheck_url`. The script still sends nothing and writes nothing.
+- `/7it-guard:check` (step 6) and the `guard` skill (step 10) pass the line on once per session, and not when the repository's `.github/workflows/` already uses the Action.
+- README: "On every push".
+
 ## 0.5.0 (2026-10-28)
 
 7IT Guard in the session, for a site 7IT Guard already watches. Off until the project adds `.7it/guard.json` with `{"site": "myapp.com"}`.
