@@ -327,7 +327,7 @@ test('text report: order, link and the closing line', async () => {
     assert.match(t, /Full report: [^\n]+\nOnce your app is live: /);
     assert.ok(!appLines[0].includes(WEAK) && !appLines[0].includes('#'), 'the app line carries nothing from the check');
     assert.equal(textReport(r, { link: false }).split('\n').filter((l) => l === APP_LINE).length, 1);
-    // 0.5.1: the GitHub check line comes once, right after the closing line (GHCHECK.public); without it the closing line is last.
+    // The GitHub check line comes once, right after the closing line (GHCHECK.public); without it the closing line is last.
     const tail = t.trim().split('\n');
     assert.equal(tail.pop(), ghcheckLine());
     assert.equal(GHCHECK.public, true);

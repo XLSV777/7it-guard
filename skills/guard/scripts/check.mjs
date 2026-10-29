@@ -41,7 +41,7 @@ export const REVIEW_URL = 'https://7it.co.il/services/ai-built-apps/';
 // came from the plugin, never the checked host or any result.
 export const APP_URL = 'https://7it.co.il/guard/app/?from=plugin';
 export const APP_LINE = `Once your app is live: the 7IT Guard app checks it from outside on a schedule and tells you when it stops answering: ${APP_URL}`;
-// 0.5.1: the 7IT Guard GitHub check (the Action XLSV777/7it-guard-check@v1, public on the GitHub Marketplace since
+// The 7IT Guard GitHub check (the Action XLSV777/7it-guard-check@v1, public on the GitHub Marketplace since
 // 2026-10-29): one line after the closing line that names it. The line is the same every run; the command and the skill
 // pass it on once per session, and not when the repository already uses the Action.
 export const GHCHECK = { public: true, url: 'https://7it.co.il/tools/guard/#github' };

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Listing icon.
+
 ## 0.5.1 (2026-10-29)
 
 - The report ends with one line naming the 7IT Guard GitHub check (the Action XLSV777/7it-guard-check@v1, now on the GitHub Marketplace): "On every push: ... Setup: https://7it.co.il/tools/guard/#github", after the closing "Not checked from outside" line; `--json` adds `ghcheck_url`. The script still sends nothing and writes nothing.
