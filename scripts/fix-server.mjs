@@ -20,7 +20,7 @@
 
 import { createInterface } from 'node:readline';
 
-const VERSION = '0.5.0';
+const VERSION = '0.5.1';
 const REVIEW_URL = 'https://7it.co.il/services/ai-built-apps/';
 // The key only ever goes to 7it.co.il over https. An override (GUARD_PLAYBOOK_URL, GUARD_VAULT_URL)
 // is used only when it is also under https://7it.co.il/, or, for the tests alone (GUARD_TEST=1),
