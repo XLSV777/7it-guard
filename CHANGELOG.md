@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- The deploy check and `/7it-guard:recheck` run on your machine (the same check as `/7it-guard:check`, about 80 checks) instead of 7IT's server. Nothing about the app is sent to 7IT by either of them; only the session brief still reads the watched site's status.
+- `/7it-guard:recheck` gives one answer: PASS, NEEDS A LOOK, PROBLEM or NOT VERIFIED. PASS only when every part ran, including the deep part, and nothing critical, high or medium is open.
+- Fixed: a finding could be reported as "Gone (verified fixed)" when its part of the check did not run. A leaked Supabase key (service role key, `sb_secret_` key, database password) was counted as fixed whenever the deep part was skipped, and a finding also dropped out when a part timed out or the server's list was cut at 16. Findings are now keyed by their id, and one whose part did not run is listed by name under "Not checked this time", never as fixed.
+- On the site in `.7it/guard.json` the deep part runs whenever the app carries the ownership token; it no longer needs the 7IT key.
+- A run saved by 0.5.2 is not compared (it came from the server's check): the first recheck after the update is the baseline.
+
 ## 0.5.2 (2026-10-29)
 
 - Listing icon.

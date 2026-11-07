@@ -16,7 +16,6 @@ import { join } from 'node:path';
 
 export const VERSION = '0.5.2';
 export const BRIEF_URL = process.env.GUARD_BRIEF_URL || 'https://7it.co.il/guard/app/api/brief';
-export const MCP_URL = process.env.GUARD_MCP_URL || 'https://7it.co.il/mcp?set=guard&via=claude-hook';
 export const WATCH_URL = 'https://7it.co.il/guard/app/';
 export const REPORT_FALLBACK = 'https://7it.co.il/tools/guard/';
 export const CHECK_EVERY_MS = 10 * 60_000; // the outside check, at most once per 10 minutes per site
@@ -133,55 +132,93 @@ export async function fetchBrief(site, key, f = fetch) {
   return j && j.ok === true ? { status: j.status, open: j.open, top: j.top, checked_at: j.checked_at } : null;
 }
 
-// ---------------------------------------------------------------- the outside check (ship_check on the guard set)
-// One JSON-RPC tools/call over the stateless MCP endpoint. With the 7IT key the server also runs the deep part (exposed files
-// and keys) for a site the key watches. Answer: the findings, each {k, sev, area, title, why, fix}, and the report link.
-const SEVS = ['critical', 'high', 'medium', 'low'];
-const keyOfFinding = (area, title) => `${clean(area, 30).toLowerCase()}|${clean(title, 120).toLowerCase().replace(/\d+(\.\d+)?/g, '#')}`;
-export function parseShip(j) {
-  const sc = j?.result?.structuredContent;
-  if (!sc || j?.result?.isError || !Array.isArray(sc.fixes)) return null;
-  const findings = sc.fixes.slice(0, 40).map((x) => {
-    const area = clean(x?.area, 30), title = clean(x?.b?.title || x?.text, 120);
-    return { k: keyOfFinding(area, title), sev: SEVS.includes(x?.severity) ? x.severity : 'low', area, title, why: clean(x?.b?.why, 200), fix: clean(x?.b?.fix, 200) };
-  }).filter((x) => x.title);
-  return { findings, report: safeLink(sc.report_url), deep: sc.deep_checked === true };
+// ---------------------------------------------------------------- the check, on this machine (0.6.0)
+// The deploy check and /7it-guard:recheck run the plugin's own check (skills/guard/scripts/check.mjs) here, the same ~80
+// checks as /7it-guard:check. Nothing about the app is sent to 7IT. Until 0.5.2 they called ship_check on 7IT's server,
+// whose findings carried no stable id and could drop out when a part timed out, so a finding could read as fixed when
+// its part simply did not run. Now every finding is keyed by its id, and a finding counts as fixed only when its part
+// ran this time. The project's .7it/guard.json names its own site, so the deep part (exposed files and keys) runs there
+// whenever the app carries the ownership token; it never needs the 7IT key.
+const SEVS = ['critical', 'high', 'medium', 'low', 'info'];
+// The deep part: exposed files, Supabase and Firebase (category data), and the keys found in the browser code (category
+// secrets). The public source map check is the one secrets finding of the public part.
+export const isDeep = (f) => f.cat === 'data' || (f.cat === 'secrets' && f.id !== 'sourcemap_public');
+// The saved shape of one run: { v: 2, at, site, deep, ran: {category: true|false}, findings: [{k, id, cat, sev, title, fix}],
+// token, report }. k is the id, with #2, #3 for a second and third finding of the same id.
+export function runOf(report, site, nowMs) {
+  const seen = {};
+  const findings = (Array.isArray(report?.findings) ? report.findings : []).filter((f) => f && typeof f.id === 'string' && SEVS.includes(f.sev)).map((f) => {
+    seen[f.id] = (seen[f.id] || 0) + 1;
+    return { k: seen[f.id] > 1 ? `${f.id}#${seen[f.id]}` : f.id, id: f.id, cat: String(f.cat || ''), sev: f.sev, title: clean(f.title, 160), fix: clean(f.fix, 240) };
+  });
+  const ran = Object.fromEntries(Object.entries(report?.categories || {}).map(([k, v]) => [k, v?.score != null]));
+  return { v: 2, at: nowMs, site, deep: String(report?.ownership || '').startsWith('verified'), ran, findings, token: String(report?.token || ''), report: String(report?.report_url || '') };
 }
-export async function shipCheck(site, key, f = fetch, ms = 75_000) {
-  const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'ship_check', arguments: { url: site } } });
-  const r = await f(MCP_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'MCP-Protocol-Version': '2025-06-18', 'User-Agent': `7ITGuard/${VERSION}`, ...(key ? { Authorization: `Bearer ${key}` } : {}) }, body, signal: AbortSignal.timeout(ms) });
-  if (!r.ok) return null;
-  let text = await r.text();
-  if (text.length > 1 << 20) return null;
-  if (!text.trimStart().startsWith('{')) text = (text.split('\n').find((l) => l.startsWith('data:')) || '').slice(5);
-  return parseShip(JSON.parse(text));
-}
-// The check, at most once per `every` per site: a newer saved result is used instead of a new request.
-export async function checkOnce(site, key, nowMs, every, f = fetch) {
-  const prev = readState(site, 'check');
-  if (prev && typeof prev.at === 'number' && nowMs - prev.at < every && Array.isArray(prev.findings)) return { ...prev, cached: true, prev: null };
-  const res = await shipCheck(site, key, f);
-  if (!res) return null;
-  const cur = { at: nowMs, site, ...res };
-  writeState(site, 'check', cur);
-  return { ...cur, cached: false, prev };
-}
+// Did the part that produces this finding run in `run`?
+export const partRan = (run, f) => (isDeep(f) ? run.deep === true : run.ran?.[f.cat] === true);
 
-// ---------------------------------------------------------------- the 7IT Guard block (the same shape as api/_guardbrand.ts)
-export function brandStatus(items) {
-  if (items.some((i) => i.sev === 'critical' || i.sev === 'high')) return 'PROBLEM';
-  if (items.some((i) => i.sev === 'medium')) return 'NEEDS A LOOK';
+// The status of one run.
+//   PROBLEM       a critical or high finding is open
+//   NOT VERIFIED  nothing critical or high was found, but the deep part did not run (no ownership token on the app), or a
+//                 critical or high finding of the earlier run could not be checked this time; never PASS in that case
+//   NEEDS A LOOK  everything ran, a medium finding is open
+//   PASS          everything ran, nothing critical, high or medium is open
+export function statusOf(run, unchecked = []) {
+  const f = run.findings || [];
+  if (f.some((x) => x.sev === 'critical' || x.sev === 'high')) return 'PROBLEM';
+  if (!run.deep || unchecked.some((x) => x.sev === 'critical' || x.sev === 'high')) return 'NOT VERIFIED';
+  if (f.some((x) => x.sev === 'medium')) return 'NEEDS A LOOK';
   return 'PASS';
 }
+// The earlier run against this one. gone = fixed, verified this time; unchecked = its part did not run this time, NOT
+// counted as fixed; still = open in both; added = new since the earlier run. Without an earlier run, everything is empty.
+export function compareRuns(prev, cur) {
+  const now = new Map(cur.findings.map((x) => [x.k, x]));
+  const was = prev && prev.v === 2 && Array.isArray(prev.findings) ? prev.findings : null;
+  if (!was) return { baseline: true, gone: [], unchecked: [], still: [], added: [] };
+  const before = new Map(was.map((x) => [x.k, x]));
+  const missing = was.filter((x) => !now.has(x.k));
+  return {
+    baseline: false,
+    gone: missing.filter((x) => partRan(cur, x)),
+    unchecked: missing.filter((x) => !partRan(cur, x)),
+    still: cur.findings.filter((x) => before.has(x.k)),
+    added: cur.findings.filter((x) => !before.has(x.k)),
+  };
+}
+// One check of the site on this machine (no 7Maps lookup, no PageSpeed: the same parts every time, so two runs compare).
+// owner: the deep part runs when the app carries the ownership token. deps: for the tests.
+export async function localCheck(site, { owner = true, deps } = {}) {
+  const { runCheck, reportLink } = await import('../../skills/guard/scripts/check.mjs');
+  const report = await runCheck(site, { owner, maps: false, deps: { env: {}, ...(deps || {}) } });
+  if (!report || report.error) return { error: report?.message || 'The check did not run.' };
+  return { report, link: reportLink(report) };
+}
+// The check, at most once per `every` per site: a newer saved run is used instead of a new check. Returns the run, the
+// earlier run it replaced (prev, null when cached) and cached.
+export async function checkOnce(site, nowMs, every, { owner = true, deps } = {}) {
+  const prev = readState(site, 'local');
+  if (prev && prev.v === 2 && typeof prev.at === 'number' && nowMs - prev.at < every && Array.isArray(prev.findings)) return { run: prev, prev: null, cached: true };
+  const r = await localCheck(site, { owner, deps });
+  if (r.error) return { error: r.error };
+  const run = { ...runOf(r.report, site, nowMs), report: r.link };
+  writeState(site, 'local', run);
+  return { run, prev, cached: false };
+}
+
+// ---------------------------------------------------------------- the 7IT Guard block
 const sentence = (s, max = 200) => { const t = clean(s, max); return t && !/[.!?]$/.test(t) ? t + '.' : t; };
-export function brandBlock(site, items, fix) {
-  const safe = items.filter((i) => !looksLikeInstruction(`${i.title} ${i.why} ${i.fix}`));
+// The full report link of this plugin (results after the #, which browsers never send), else the docs page.
+export const reportLinkOf = (u) => (typeof u === 'string' && u.startsWith('https://7it.co.il/tools/guard/report/#r=') && u.length <= 9000 && /^[A-Za-z0-9\-._~:/?#=&%]*$/.test(u) ? u : REPORT_FALLBACK);
+export function brandBlock(site, run, unchecked = []) {
+  const items = run.findings || [];
+  const safe = items.filter((i) => i.sev !== 'info' && !looksLikeInstruction(`${i.title} ${i.fix}`));
   const top = safe.slice(0, BRAND_MAX);
-  const out = [`7IT Guard · ${brandStatus(items)} · ${site}`];
-  if (!top.length) out.push('No problems found in these checks.');
-  top.forEach((it, i) => out.push(`${i + 1}. ${clean(it.title, 120).replace(/\.$/, '')}`, `   Why: ${sentence(it.why || 'See the full report.')}`, `   Fix: ${sentence(it.fix || 'See the full report.')}`));
-  if (items.length > top.length) out.push(`And ${items.length - top.length} more in the full report.`);
-  out.push(`Fix it: ${safeLink(fix)}`, `Watch it all the time: ${WATCH_URL}`);
+  const out = [`7IT Guard · ${statusOf(run, unchecked)} · ${site}`];
+  if (!top.length) out.push(run.deep ? 'No problems found in these checks.' : 'No problems found in the outside checks. The deep part did not run (see above).');
+  top.forEach((it, i) => out.push(`${i + 1}. ${clean(it.title, 120).replace(/\.$/, '')} (${it.sev})`, `   Fix: ${sentence(it.fix || 'See the full report.')}`));
+  if (safe.length > top.length) out.push(`And ${safe.length - top.length} more in the full report.`);
+  out.push(`Full report: ${reportLinkOf(run.report)}`, `Watch it all the time: ${WATCH_URL}`);
   return out.join('\n');
 }
 export const urgent = (findings) => findings.filter((x) => x.sev === 'critical' || x.sev === 'high');
