@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (2026-11-07)
 
 - The deploy check and `/7it-guard:recheck` run on your machine (the same check as `/7it-guard:check`, about 80 checks) instead of 7IT's server. Nothing about the app is sent to 7IT by either of them; only the session brief still reads the watched site's status.
 - `/7it-guard:recheck` gives one answer: PASS, NEEDS A LOOK, PROBLEM or NOT VERIFIED. PASS only when every part ran, including the deep part, and nothing critical, high or medium is open.

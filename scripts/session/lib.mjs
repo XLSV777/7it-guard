@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-export const VERSION = '0.5.2';
+export const VERSION = '0.6.0';
 export const BRIEF_URL = process.env.GUARD_BRIEF_URL || 'https://7it.co.il/guard/app/api/brief';
 export const WATCH_URL = 'https://7it.co.il/guard/app/';
 export const REPORT_FALLBACK = 'https://7it.co.il/tools/guard/';
