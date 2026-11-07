@@ -106,8 +106,8 @@ For a site 7IT Guard already watches, the plugin can bring what it knows into yo
 ```
 
 - **At session start**, a brief of at most 5 lines: the site, the status (PASS, NEEDS A LOOK, PROBLEM, DOWN, PAUSED or WAITING), the number of open problems, the top 3 by name, and the time of the last check. It needs the 7IT key in the plugin's setting. The words are fixed: the plugin prints its own titles for the problems it knows and never passes on text from the site.
-- **Before a deploy or push** (`git push`, `vercel --prod`, `netlify deploy`, `npm run deploy` and the like), the outside check of the live site, at most once per 10 minutes per site. When it finds something critical or high, you see the 7IT Guard block and Claude is told about it. It warns and lets the command go on. To stop the command instead, add `"block": true` to the file.
-- **`/7it-guard:recheck`** after a fix: checks again and says which earlier findings are gone (verified fixed from outside), which are still open and which are new. With no address it uses the site in `.7it/guard.json`.
+- **Before a deploy or push** (`git push`, `vercel --prod`, `netlify deploy`, `npm run deploy` and the like), the same check as `/7it-guard:check`, run on your machine, at most once per 10 minutes per site. When it finds something critical or high, you see the 7IT Guard block and Claude is told about it. It warns and lets the command go on. To stop the command instead, add `"block": true` to the file.
+- **`/7it-guard:recheck`** after a fix: checks again on your machine and gives one answer: **PASS** (every part of the check ran and nothing critical, high or medium is open), **NEEDS A LOOK**, **PROBLEM**, or **NOT VERIFIED** (the deep part did not run because the ownership token is not on the app, or an earlier serious finding could not be checked this time). It lists which earlier findings are gone (verified fixed), still open, new, and not checked this time. A finding counts as fixed only when its part of the check ran again. On the site in `.7it/guard.json` the deep part runs whenever the app carries the ownership token; no 7IT key needed. With no address it uses that site.
 
 Other fields of the file: `"brief": false` turns the session brief off, `"predeploy": false` turns the deploy check off. Without the file, or without a site in it, the hooks print nothing and send nothing.
 
@@ -124,7 +124,7 @@ Other fields of the file: `"brief": false` turns the session brief off, `"predep
 
 - **The backup vault** (`/7it-guard:vault`): your data never comes to 7IT. The copy is made, encrypted with your own key and stored in your own storage by the workflow in your own GitHub account. The setup reads the project's env files on your machine and passes secrets straight to `gh secret set`; it never prints them. With your 7IT key, the local fix server makes the registration request to `https://7it.co.il/guard/app/api/vault_setup` with the key, the site's address, the repository's name and numeric id, the branch, the schedule, the time zone and whether stored files are copied (for the monthly export reminder on Lovable Cloud or Bolt Database: only the site's address and the platform's name). Never a database address, a password, a storage key or any private key. After that, each run sends 7IT a short receipt from your workflow (times, sizes, checksums, counts, which dates can be restored, ok or not), proven by GitHub's own identity token for that run.
 
-- **In the session** (only with `.7it/guard.json` in the project): the session brief makes ONE request to `https://7it.co.il/guard/app/api/brief` with the 7IT key and the site's address, at most once per 5 minutes per site, and gets back only the status, the count, up to 3 problem names and the last check time. The deploy check and `/7it-guard:recheck` run the outside check on 7IT's server (`ship_check` on `https://7it.co.il/mcp?set=guard`), so 7IT receives the site's address, and the 7IT key when you set one (so the deep part runs on a site the key watches). The last result is kept on your machine (the plugin's data folder) to compare after a fix; the key is never written there. To tell a push or deploy from other commands, the hook reads each shell command on your machine; the command itself is never sent. Nothing about your code, your files, your prompts or the conversation is sent.
+- **In the session** (only with `.7it/guard.json` in the project): the session brief makes ONE request to `https://7it.co.il/guard/app/api/brief` with the 7IT key and the site's address, at most once per 5 minutes per site, and gets back only the status, the count, up to 3 problem names and the last check time. The deploy check and `/7it-guard:recheck` run on your machine, like `/7it-guard:check`: nothing about the app is sent to 7IT (until 0.5.2 they ran on 7IT's server). Their last result is kept on your machine (the plugin's data folder) to compare after a fix: finding ids, severities, titles and fix sentences, never a file's content or a key's value. To tell a push or deploy from other commands, the hook reads each shell command on your machine; the command itself is never sent. Nothing about your code, your files, your prompts or the conversation is sent.
 
 Privacy policy (a table per channel, and the session hooks at https://7it.co.il/privacy/#guard-hooks): https://7it.co.il/privacy/#guard
 
@@ -141,7 +141,7 @@ One 7IT key will unlock both 7IT plugins: this plugin's optional setting (`fix_k
 ## Tests
 
 ```
-node --test tests/check.test.mjs
+node --test tests/check.test.mjs tests/session.test.mjs
 ```
 
 Every network call in the tests goes to a local mock server; DNS and TLS are stubbed.
