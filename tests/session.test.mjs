@@ -1,4 +1,4 @@
-// The session helpers' check (scripts/session/lib.mjs, 0.6.0): the deploy check and /7it-guard:recheck run the plugin's
+// The session helpers' check (scripts/session/lib.mjs): the deploy check and /7it-guard:recheck run the plugin's
 // own check on this machine, and a finding counts as fixed only when its part ran this time.
 //   node --test tests/
 import { test } from 'node:test';
