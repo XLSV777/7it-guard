@@ -134,7 +134,7 @@ export async function fetchBrief(site, key, f = fetch) {
 
 // ---------------------------------------------------------------- the check, on this machine (0.6.0)
 // The deploy check and /7it-guard:recheck run the plugin's own check (skills/guard/scripts/check.mjs) here, the same ~80
-// checks as /7it-guard:check. Nothing about the app is sent to 7IT. Until 0.5.2 they called ship_check on 7IT's server,
+// checks as /7it-guard:check. Nothing about the app is sent to 7IT. Before 0.6.0 they called ship_check on 7IT's server,
 // whose findings carried no stable id and could drop out when a part timed out, so a finding could read as fixed when
 // its part simply did not run. Now every finding is keyed by its id, and a finding counts as fixed only when its part
 // ran this time. The project's .7it/guard.json names its own site, so the deep part (exposed files and keys) runs there

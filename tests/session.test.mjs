@@ -56,7 +56,7 @@ test('findings are keyed by id, not by their changing titles', () => {
   assert.ok(isDeep({ id: 'secret_openai', cat: 'secrets' }) && !isDeep({ id: 'sourcemap_public', cat: 'secrets' }) && isDeep({ id: 'sb_advisor', cat: 'data' }));
 });
 
-test('a run saved by 0.5.2 (the server shape) is a baseline, not compared', () => {
+test('a run saved by an earlier version (the server shape) is a baseline, not compared', () => {
   const c = compareRuns({ at: 1, site: 'myapp.com', findings: [{ k: 'security|x', sev: 'high', area: 'security', title: 'x' }] }, run([]));
   assert.equal(c.baseline, true);
   assert.deepEqual(c.gone, []);
